@@ -3,6 +3,17 @@ export type WaveformPeak = {
   max: number;
 };
 
+export const waveformZoomLevels = [1, 2, 4, 8, 16] as const;
+
+export type WaveformZoom = (typeof waveformZoomLevels)[number];
+
+export type WaveformRange = {
+  end: number;
+  start: number;
+};
+
+export const defaultWaveformZoom: WaveformZoom = 1;
+
 type PeakSource = {
   duration: number;
   length: number;
@@ -41,4 +52,118 @@ export function buildWaveformPeaks(
   }
 
   return peaks;
+}
+
+export function nextWaveformZoom(
+  currentZoom: number,
+  direction: "in" | "out"
+): WaveformZoom {
+  const currentIndex = waveformZoomLevels.findIndex(
+    (zoom) => zoom === currentZoom
+  );
+  const fallbackIndex = waveformZoomLevels.indexOf(defaultWaveformZoom);
+  const safeIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
+  const nextIndex =
+    direction === "in"
+      ? Math.min(waveformZoomLevels.length - 1, safeIndex + 1)
+      : Math.max(0, safeIndex - 1);
+
+  return waveformZoomLevels[nextIndex];
+}
+
+export function getWaveformRange(
+  duration: number,
+  zoom: number,
+  viewportStart: number
+): WaveformRange {
+  const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
+
+  if (safeDuration === 0) {
+    return { end: 0, start: 0 };
+  }
+
+  const safeZoom = Number.isFinite(zoom) ? Math.max(1, zoom) : 1;
+  const visibleDuration = safeDuration / safeZoom;
+  const maxStart = Math.max(0, safeDuration - visibleDuration);
+  const safeStart = Number.isFinite(viewportStart) ? viewportStart : 0;
+  const start = Math.min(Math.max(0, safeStart), maxStart);
+
+  return {
+    end: Math.min(safeDuration, start + visibleDuration),
+    start
+  };
+}
+
+export function centerWaveformRange(
+  time: number,
+  duration: number,
+  zoom: number
+) {
+  const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
+  const safeZoom = Number.isFinite(zoom) ? Math.max(1, zoom) : 1;
+  const visibleDuration = safeDuration / safeZoom;
+
+  return getWaveformRange(
+    safeDuration,
+    safeZoom,
+    time - visibleDuration / 2
+  ).start;
+}
+
+export function keepTimeInWaveformRange(
+  time: number,
+  duration: number,
+  zoom: number,
+  viewportStart: number
+) {
+  const range = getWaveformRange(duration, zoom, viewportStart);
+  const visibleDuration = range.end - range.start;
+
+  if (visibleDuration <= 0 || zoom <= 1) {
+    return 0;
+  }
+
+  const padding = visibleDuration * 0.18;
+
+  if (time < range.start + padding) {
+    return getWaveformRange(duration, zoom, time - padding).start;
+  }
+
+  if (time > range.end - padding) {
+    return getWaveformRange(duration, zoom, time + padding - visibleDuration)
+      .start;
+  }
+
+  return range.start;
+}
+
+export function timeToWaveformPercent(time: number, range: WaveformRange) {
+  const visibleDuration = range.end - range.start;
+
+  if (visibleDuration <= 0) {
+    return 0;
+  }
+
+  return Math.min(
+    100,
+    Math.max(0, ((time - range.start) / visibleDuration) * 100)
+  );
+}
+
+export function waveformPercentToTime(
+  percent: number,
+  range: WaveformRange,
+  duration: number
+) {
+  const safePercent = Math.min(Math.max(0, percent), 1);
+  const visibleDuration = range.end - range.start;
+
+  if (visibleDuration <= 0) {
+    return 0;
+  }
+
+  return Math.min(
+    Math.max(0, range.start + visibleDuration * safePercent),
+    Math.max(0, duration)
+  );
 }

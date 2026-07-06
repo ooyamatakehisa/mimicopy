@@ -428,6 +428,7 @@ button {
 }
 
 .markerJump strong,
+.zoomCluster strong,
 .speedCluster strong {
   font-variant-numeric: tabular-nums;
 }
@@ -438,13 +439,15 @@ button {
 }
 
 .transportCluster,
-.speedCluster {
+.speedCluster,
+.zoomCluster {
   display: flex;
   align-items: center;
   gap: 9px;
 }
 
-.speedCluster {
+.speedCluster,
+.zoomCluster {
   min-width: 178px;
   justify-content: flex-end;
 }
@@ -485,7 +488,8 @@ button {
   }
 
   .transportCluster,
-  .speedCluster {
+  .speedCluster,
+  .zoomCluster {
     width: 100%;
     flex-wrap: wrap;
     justify-content: flex-start;

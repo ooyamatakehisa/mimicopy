@@ -9,7 +9,9 @@ import {
   Plus,
   RotateCcw,
   Trash2,
-  Upload
+  Upload,
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -38,7 +40,18 @@ import {
   sortMarkers,
   type Marker
 } from "./lib/markers";
-import { buildWaveformPeaks, type WaveformPeak } from "./lib/waveform";
+import {
+  buildWaveformPeaks,
+  centerWaveformRange,
+  defaultWaveformZoom,
+  getWaveformRange,
+  keepTimeInWaveformRange,
+  nextWaveformZoom,
+  timeToWaveformPercent,
+  waveformPercentToTime,
+  type WaveformPeak,
+  type WaveformZoom
+} from "./lib/waveform";
 
 type AudioSource = {
   kind: "file" | "youtube";
@@ -78,7 +91,7 @@ async function decodePeaksFromArrayBuffer(arrayBuffer: ArrayBuffer) {
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
     return {
       duration: audioBuffer.duration,
-      peaks: buildWaveformPeaks(audioBuffer, 1_200)
+      peaks: buildWaveformPeaks(audioBuffer, 4_800)
     };
   } finally {
     await audioContext.close();
@@ -121,14 +134,28 @@ export function App() {
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [markerInput, setMarkerInput] = useState("0:00");
   const [waveformSize, setWaveformSize] = useState({ height: 0, width: 0 });
+  const [waveformZoom, setWaveformZoom] =
+    useState<WaveformZoom>(defaultWaveformZoom);
+  const [waveformStart, setWaveformStart] = useState(0);
 
   const sortedMarkers = useMemo(() => sortMarkers(markers), [markers]);
   const selectedMarker = useMemo(
     () => sortedMarkers.find((marker) => marker.id === selectedMarkerId) ?? null,
     [selectedMarkerId, sortedMarkers]
   );
-  const playheadPercent =
-    duration > 0 ? (clampTime(currentTime, duration) / duration) * 100 : 0;
+  const waveformRange = useMemo(
+    () => getWaveformRange(duration, waveformZoom, waveformStart),
+    [duration, waveformStart, waveformZoom]
+  );
+  const visibleMarkers = useMemo(
+    () =>
+      sortedMarkers.filter(
+        (marker) =>
+          marker.time >= waveformRange.start && marker.time <= waveformRange.end
+      ),
+    [sortedMarkers, waveformRange.end, waveformRange.start]
+  );
+  const playheadPercent = timeToWaveformPercent(currentTime, waveformRange);
   const playheadStyle: DynamicStyle = {
     "--marker-left": "0%",
     "--playhead-left": `${playheadPercent}%`
@@ -151,6 +178,8 @@ export function App() {
     setMarkers([]);
     setSelectedMarkerId(null);
     setMarkerInput("0:00");
+    setWaveformZoom(defaultWaveformZoom);
+    setWaveformStart(0);
   }, []);
 
   const seekTo = useCallback(
@@ -227,6 +256,19 @@ export function App() {
       currentMarkerId === markerId ? null : currentMarkerId
     );
   }, []);
+
+  const changeWaveformZoom = useCallback(
+    (direction: "in" | "out") => {
+      setWaveformZoom((currentZoom) => {
+        const nextZoom = nextWaveformZoom(currentZoom, direction);
+
+        setWaveformStart(centerWaveformRange(currentTime, duration, nextZoom));
+
+        return nextZoom;
+      });
+    },
+    [currentTime, duration]
+  );
 
   const handleShortcut = useCallback(
     (event: KeyboardEvent) => {
@@ -376,9 +418,9 @@ export function App() {
         1
       );
 
-      seekTo(duration * ratio);
+      seekTo(waveformPercentToTime(ratio, waveformRange, duration));
     },
-    [duration, seekTo]
+    [duration, seekTo, waveformRange]
   );
 
   useEffect(() => {
@@ -427,6 +469,12 @@ export function App() {
       window.removeEventListener("keydown", handleShortcut);
     };
   }, [handleShortcut]);
+
+  useEffect(() => {
+    setWaveformStart((currentStart) =>
+      keepTimeInWaveformRange(currentTime, duration, waveformZoom, currentStart)
+    );
+  }, [currentTime, duration, waveformZoom]);
 
   useEffect(() => {
     const waveform = waveformRef.current;
@@ -486,12 +534,29 @@ export function App() {
     }
 
     const centerY = cssHeight / 2;
-    const barWidth = Math.max(1, cssWidth / peaks.length);
+    const hasTimeline = duration > 0 && waveformRange.end > waveformRange.start;
+    const startIndex = hasTimeline
+      ? Math.max(
+          0,
+          Math.floor((waveformRange.start / duration) * peaks.length)
+        )
+      : 0;
+    const endIndex = hasTimeline
+      ? Math.min(
+          peaks.length,
+          Math.max(
+            startIndex + 1,
+            Math.ceil((waveformRange.end / duration) * peaks.length)
+          )
+        )
+      : peaks.length;
+    const visiblePeaks = peaks.slice(startIndex, endIndex);
+    const barWidth = Math.max(1, cssWidth / visiblePeaks.length);
 
     context.fillStyle = gradient;
 
-    for (let index = 0; index < peaks.length; index += 1) {
-      const peak = peaks[index];
+    for (let index = 0; index < visiblePeaks.length; index += 1) {
+      const peak = visiblePeaks[index];
       const min = Math.min(0, peak.min);
       const max = Math.max(0, peak.max);
       const x = index * barWidth;
@@ -500,7 +565,7 @@ export function App() {
 
       context.fillRect(x, y, Math.max(1, barWidth * 0.82), barHeight);
     }
-  }, [peaks, waveformSize]);
+  }, [duration, peaks, waveformRange, waveformSize]);
 
   return (
     <main className="appShell">
@@ -606,9 +671,11 @@ export function App() {
             onPointerDown={handleWaveformPointerDown}
           >
             <canvas ref={canvasRef} className="waveformCanvas" />
-            {sortedMarkers.map((marker) => {
-              const markerLeft =
-                duration > 0 ? `${(marker.time / duration) * 100}%` : "0%";
+            {visibleMarkers.map((marker) => {
+              const markerLeft = `${timeToWaveformPercent(
+                marker.time,
+                waveformRange
+              )}%`;
               const style: DynamicStyle = {
                 "--marker-left": markerLeft,
                 "--playhead-left": "0%"
@@ -773,8 +840,31 @@ export function App() {
           </button>
         </div>
 
-        <div className="speedCluster">
-          <Gauge size={18} />
+        <div className="zoomCluster" aria-label="Waveform zoom">
+          <ZoomOut size={18} aria-hidden="true" />
+          <button
+            className="iconButton"
+            type="button"
+            title="波形を縮小"
+            disabled={waveformZoom === 1}
+            onClick={() => changeWaveformZoom("out")}
+          >
+            <ZoomOut size={17} />
+          </button>
+          <strong>{waveformZoom}x</strong>
+          <button
+            className="iconButton"
+            type="button"
+            title="波形を拡大"
+            disabled={waveformZoom === 16}
+            onClick={() => changeWaveformZoom("in")}
+          >
+            <ZoomIn size={17} />
+          </button>
+        </div>
+
+        <div className="speedCluster" aria-label="Playback speed">
+          <Gauge size={18} aria-hidden="true" />
           <button
             className="iconButton"
             type="button"

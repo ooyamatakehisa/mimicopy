@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 
@@ -13,12 +19,26 @@ describe("App", () => {
 
   it("changes playback speed with keyboard shortcuts", () => {
     render(<App />);
+    const speedControls = screen.getByLabelText("Playback speed");
 
     fireEvent.keyDown(window, { key: ",", shiftKey: true });
     expect(screen.getByText("0.75x")).toBeVisible();
 
     fireEvent.keyDown(window, { key: ".", shiftKey: true });
-    expect(screen.getByText("1x")).toBeVisible();
+    expect(within(speedControls).getByText("1x")).toBeVisible();
+  });
+
+  it("changes waveform zoom with the zoom controls", () => {
+    render(<App />);
+    const zoomControls = screen.getByLabelText("Waveform zoom");
+
+    expect(within(zoomControls).getByText("1x")).toBeVisible();
+
+    fireEvent.click(screen.getByTitle("波形を拡大"));
+    expect(within(zoomControls).getByText("2x")).toBeVisible();
+
+    fireEvent.click(screen.getByTitle("波形を縮小"));
+    expect(within(zoomControls).getByText("1x")).toBeVisible();
   });
 
   it("loads an mp3 and adds a marker from an arbitrary time", async () => {
