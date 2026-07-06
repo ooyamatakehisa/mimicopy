@@ -28,10 +28,10 @@
 
 Before finishing any implementation, run:
 
-1. `npm run lint`
-2. `npm run typecheck`
-3. `npm test`
-4. `npm run build`
+1. `pnpm lint`
+2. `pnpm typecheck`
+3. `pnpm test`
+4. `pnpm build`
 
 For UI-facing work, also run the app locally and verify the main workflow in a browser:
 
