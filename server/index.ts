@@ -1,11 +1,12 @@
 import express, { type Request, type Response } from "express";
-import { Innertube } from "youtubei.js";
+import { Innertube, type Types } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.PORT ?? 5174);
 const MAX_YOUTUBE_DURATION_SECONDS = 60 * 60 * 2;
@@ -26,6 +27,12 @@ type YoutubeResponseBody =
       error: string;
     };
 
+export type YoutubeDownloadPlan = {
+  client: Types.InnerTubeClient;
+  label: string;
+  options: Types.DownloadOptions;
+};
+
 const youtubeHosts = new Set([
   "youtube.com",
   "www.youtube.com",
@@ -33,6 +40,24 @@ const youtubeHosts = new Set([
   "music.youtube.com",
   "youtu.be"
 ]);
+
+export const youtubeDownloadPlans = [
+  {
+    client: "IOS",
+    label: "iOS audio-only MP4",
+    options: { format: "mp4", quality: "best", type: "audio" }
+  },
+  {
+    client: "ANDROID",
+    label: "Android 360p MP4 video",
+    options: { format: "mp4", quality: "360p", type: "video+audio" }
+  },
+  {
+    client: "ANDROID",
+    label: "Android best MP4 video",
+    options: { format: "mp4", quality: "best", type: "video+audio" }
+  }
+] satisfies readonly YoutubeDownloadPlan[];
 
 class InputError extends Error {}
 
@@ -44,7 +69,7 @@ function toErrorMessage(error: unknown) {
   return "Unknown server error";
 }
 
-function getYoutubeVideoId(value: unknown) {
+export function getYoutubeVideoId(value: unknown) {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new InputError("YouTube URL is required.");
   }
@@ -144,7 +169,28 @@ async function transcodeToMp3(input: Readable, outputPath: string) {
     });
   });
 
-  await Promise.all([pipeline(input, ffmpeg.stdin), completed]);
+  let streamError: unknown;
+
+  try {
+    await pipeline(input, ffmpeg.stdin);
+  } catch (error) {
+    streamError = error;
+    ffmpeg.kill("SIGTERM");
+  }
+
+  try {
+    await completed;
+  } catch (error) {
+    if (streamError) {
+      throw streamError;
+    }
+
+    throw error;
+  }
+
+  if (streamError) {
+    throw streamError;
+  }
 }
 
 function getDurationSeconds(value: string | number | undefined) {
@@ -152,7 +198,49 @@ function getDurationSeconds(value: string | number | undefined) {
   return Number.isFinite(duration) ? duration : 0;
 }
 
-function createApp() {
+async function convertYoutubeToMp3(videoId: string, outputPath: string) {
+  const youtube = await getYoutubeClient();
+  const failures: string[] = [];
+  let duration = 0;
+  let title = "YouTube audio";
+
+  for (const [index, plan] of youtubeDownloadPlans.entries()) {
+    const attemptPath = `${outputPath}.${index}.tmp`;
+
+    try {
+      const info = await youtube.getBasicInfo(videoId, { client: plan.client });
+
+      duration = getDurationSeconds(info.basic_info.duration) || duration;
+      title = info.basic_info.title || title;
+
+      if (duration > MAX_YOUTUBE_DURATION_SECONDS) {
+        throw new InputError("Videos longer than 2 hours are not supported.");
+      }
+
+      const webStream = await info.download(plan.options);
+      const stream = Readable.fromWeb(webStream);
+
+      await transcodeToMp3(stream, attemptPath);
+      await rename(attemptPath, outputPath);
+
+      return { duration, title };
+    } catch (error) {
+      await rm(attemptPath, { force: true }).catch(() => undefined);
+
+      if (error instanceof InputError) {
+        throw error;
+      }
+
+      failures.push(`${plan.label}: ${toErrorMessage(error)}`);
+    }
+  }
+
+  throw new Error(
+    `All YouTube download methods failed. ${failures.join(" | ")}`
+  );
+}
+
+export function createApp() {
   const app = express();
 
   app.use(express.json({ limit: "1mb" }));
@@ -174,33 +262,14 @@ function createApp() {
         const videoId = getYoutubeVideoId(request.body.url);
         await mkdir(mediaDir, { recursive: true });
 
-        const youtube = await getYoutubeClient();
-        const info = await youtube.getBasicInfo(videoId, { client: "IOS" });
-        const duration = getDurationSeconds(info.basic_info.duration);
-
-        if (duration > MAX_YOUTUBE_DURATION_SECONDS) {
-          response.status(400).json({
-            error: "Videos longer than 2 hours are not supported."
-          });
-          return;
-        }
-
         const fileName = `${randomUUID()}.mp3`;
         outputPath = path.join(mediaDir, fileName);
-        const webStream = await info.download({
-          client: "IOS",
-          format: "any",
-          quality: "best",
-          type: "audio"
-        });
-        const stream = Readable.fromWeb(webStream);
-
-        await transcodeToMp3(stream, outputPath);
+        const converted = await convertYoutubeToMp3(videoId, outputPath);
 
         response.json({
-          duration,
+          duration: converted.duration,
           mediaUrl: `/media/${fileName}`,
-          title: info.basic_info.title || "YouTube audio"
+          title: converted.title
         });
       } catch (error) {
         if (outputPath) {
@@ -232,8 +301,18 @@ function createApp() {
   return app;
 }
 
-const app = createApp();
+function isDirectRun() {
+  const entryPath = process.argv[1];
 
-app.listen(PORT, () => {
-  console.log(`Mimicopy API listening on http://127.0.0.1:${PORT}`);
-});
+  return Boolean(
+    entryPath && path.resolve(entryPath) === fileURLToPath(import.meta.url)
+  );
+}
+
+if (isDirectRun()) {
+  const app = createApp();
+
+  app.listen(PORT, () => {
+    console.log(`Mimicopy API listening on http://127.0.0.1:${PORT}`);
+  });
+}
