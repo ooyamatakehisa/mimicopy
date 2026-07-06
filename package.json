@@ -15,11 +15,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.server.json"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "express": "^5.2.1",
     "lucide-react": "^1.22.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "youtubei.js": "^17.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

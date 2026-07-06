@@ -1,15 +1,16 @@
-import ytdl from "@distube/ytdl-core";
 import express, { type Request, type Response } from "express";
+import { Innertube } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 
 const PORT = Number(process.env.PORT ?? 5174);
 const MAX_YOUTUBE_DURATION_SECONDS = 60 * 60 * 2;
 const mediaDir = path.resolve(process.cwd(), "storage", "media");
+let youtubeClientPromise: Promise<Innertube> | null = null;
 
 type YoutubeRequestBody = {
   url?: unknown;
@@ -33,6 +34,8 @@ const youtubeHosts = new Set([
   "youtu.be"
 ]);
 
+class InputError extends Error {}
+
 function toErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -41,9 +44,9 @@ function toErrorMessage(error: unknown) {
   return "Unknown server error";
 }
 
-function parseYoutubeUrl(value: unknown) {
+function getYoutubeVideoId(value: unknown) {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("YouTube URL is required.");
+    throw new InputError("YouTube URL is required.");
   }
 
   let parsed: URL;
@@ -51,22 +54,49 @@ function parseYoutubeUrl(value: unknown) {
   try {
     parsed = new URL(value.trim());
   } catch {
-    throw new Error("Enter a valid YouTube URL.");
+    throw new InputError("Enter a valid YouTube URL.");
   }
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error("Only HTTP or HTTPS YouTube URLs are supported.");
+    throw new InputError("Only HTTP or HTTPS YouTube URLs are supported.");
   }
 
   const hostname = parsed.hostname.toLowerCase();
   const isYoutubeHost =
     youtubeHosts.has(hostname) || hostname.endsWith(".youtube.com");
 
-  if (!isYoutubeHost || !ytdl.validateURL(parsed.toString())) {
-    throw new Error("Enter a valid YouTube video URL.");
+  if (!isYoutubeHost) {
+    throw new InputError("Enter a valid YouTube video URL.");
   }
 
-  return parsed.toString();
+  if (hostname === "youtu.be") {
+    const videoId = parsed.pathname.split("/").filter(Boolean)[0];
+
+    if (videoId) {
+      return videoId;
+    }
+  }
+
+  const watchVideoId = parsed.searchParams.get("v");
+
+  if (watchVideoId) {
+    return watchVideoId;
+  }
+
+  const pathMatch = parsed.pathname.match(
+    /^\/(?:embed|live|shorts)\/([^/?#]+)/
+  );
+
+  if (pathMatch?.[1]) {
+    return pathMatch[1];
+  }
+
+  throw new InputError("Enter a valid YouTube video URL.");
+}
+
+function getYoutubeClient() {
+  youtubeClientPromise ??= Innertube.create();
+  return youtubeClientPromise;
 }
 
 function createFfmpegProcess(outputPath: string) {
@@ -141,11 +171,12 @@ function createApp() {
       let outputPath: string | undefined;
 
       try {
-        const url = parseYoutubeUrl(request.body.url);
+        const videoId = getYoutubeVideoId(request.body.url);
         await mkdir(mediaDir, { recursive: true });
 
-        const info = await ytdl.getBasicInfo(url);
-        const duration = getDurationSeconds(info.videoDetails.lengthSeconds);
+        const youtube = await getYoutubeClient();
+        const info = await youtube.getBasicInfo(videoId, { client: "IOS" });
+        const duration = getDurationSeconds(info.basic_info.duration);
 
         if (duration > MAX_YOUTUBE_DURATION_SECONDS) {
           response.status(400).json({
@@ -156,18 +187,20 @@ function createApp() {
 
         const fileName = `${randomUUID()}.mp3`;
         outputPath = path.join(mediaDir, fileName);
-        const stream = ytdl(url, {
-          filter: "audioonly",
-          highWaterMark: 1 << 25,
-          quality: "highestaudio"
+        const webStream = await info.download({
+          client: "IOS",
+          format: "any",
+          quality: "best",
+          type: "audio"
         });
+        const stream = Readable.fromWeb(webStream);
 
         await transcodeToMp3(stream, outputPath);
 
         response.json({
           duration,
           mediaUrl: `/media/${fileName}`,
-          title: info.videoDetails.title || "YouTube audio"
+          title: info.basic_info.title || "YouTube audio"
         });
       } catch (error) {
         if (outputPath) {
@@ -175,9 +208,7 @@ function createApp() {
         }
 
         const message = toErrorMessage(error);
-        const status = message.toLowerCase().includes("youtube url")
-          ? 400
-          : 500;
+        const status = error instanceof InputError ? 400 : 500;
 
         response.status(status).json({
           error:
