@@ -59,7 +59,8 @@ button {
 .appShell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto auto;
+  align-content: start;
   gap: 16px;
   padding: 18px;
 }
@@ -221,6 +222,7 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  align-items: start;
   gap: 16px;
 }
 
@@ -233,7 +235,7 @@ button {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto minmax(320px, 1fr);
+  grid-template-rows: auto auto;
 }
 
 .timelineMeta {
@@ -276,7 +278,8 @@ button {
 
 .waveformSurface {
   position: relative;
-  min-height: 320px;
+  height: clamp(160px, 24vh, 220px);
+  min-height: 0;
   overflow: hidden;
   cursor: crosshair;
   outline: 0;
@@ -501,7 +504,7 @@ button {
   }
 
   .waveformSurface {
-    min-height: 260px;
+    height: clamp(140px, 34vh, 180px);
   }
 
   .transportButton {
