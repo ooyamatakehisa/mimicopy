@@ -27,3 +27,23 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Cloudflare Deployment
+
+This app uses `ffmpeg` for YouTube-to-mp3 conversion, so deploy it to Cloudflare
+Workers with a Cloudflare Container backend instead of a plain Worker or Pages
+Function.
+
+Prerequisites:
+
+- Docker or a Docker-compatible engine running locally
+- Wrangler authenticated with Cloudflare
+- A Cloudflare plan with Containers enabled
+
+```sh
+pnpm deploy:cloudflare
+```
+
+The Worker serves the built Vite app from `dist/` and routes `/api` and `/media`
+requests to a single named container instance so generated MP3 files are served
+from the same backend that created them.
