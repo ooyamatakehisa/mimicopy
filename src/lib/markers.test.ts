@@ -4,6 +4,7 @@ import {
   findReturnMarker,
   removeMarker,
   sortMarkers,
+  updateMarker,
   type Marker
 } from "./markers";
 
@@ -38,5 +39,23 @@ describe("marker helpers", () => {
 
     expect(nextMarkers.map((marker) => marker.id)).toEqual(["late", "early"]);
     expect(markers).toHaveLength(3);
+  });
+
+  it("updates marker fields without mutating the input", () => {
+    const nextMarkers = updateMarker(markers, "middle", {
+      label: "Verse",
+      time: 24
+    });
+
+    expect(nextMarkers.find((marker) => marker.id === "middle")).toEqual({
+      id: "middle",
+      label: "Verse",
+      time: 24
+    });
+    expect(markers.find((marker) => marker.id === "middle")).toEqual({
+      id: "middle",
+      label: "Middle",
+      time: 20
+    });
   });
 });

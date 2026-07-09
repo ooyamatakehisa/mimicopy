@@ -312,7 +312,8 @@ button {
   border: 0;
   border-left: 2px solid rgba(244, 162, 97, 0.84);
   background: transparent;
-  cursor: pointer;
+  cursor: ew-resize;
+  touch-action: none;
 }
 
 .markerLine::before {
@@ -332,6 +333,14 @@ button {
 
 .markerLine.selected::before {
   background: var(--coral);
+}
+
+.markerLine.dragging {
+  border-left-color: var(--paper);
+}
+
+.markerLine.dragging::before {
+  background: var(--paper);
 }
 
 .playhead {
@@ -395,7 +404,7 @@ button {
 
 .markerItem {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
@@ -407,27 +416,34 @@ button {
   background: rgba(231, 111, 81, 0.08);
 }
 
-.markerJump {
+.markerEditor {
   min-width: 0;
-  min-height: 44px;
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
   align-items: center;
-  border: 0;
+}
+
+.markerEditor input {
+  min-width: 0;
+  height: 44px;
+  border: 1px solid transparent;
+  outline: 0;
   padding: 0 10px;
   color: var(--paper);
   background: rgba(247, 247, 242, 0.07);
-  cursor: pointer;
 }
 
-.markerJump span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.markerEditor input:focus {
+  border-color: rgba(244, 162, 97, 0.72);
+  background: rgba(247, 247, 242, 0.1);
 }
 
-.markerJump strong,
+.markerTimeInput {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .zoomCluster strong,
 .speedCluster strong {
   font-variant-numeric: tabular-nums;
@@ -489,7 +505,8 @@ button {
 
   .transportCluster,
   .speedCluster,
-  .zoomCluster {
+  .zoomCluster,
+  .markerEditor {
     width: 100%;
     flex-wrap: wrap;
     justify-content: flex-start;
@@ -513,5 +530,10 @@ button {
 
   .transportButton {
     flex: 1;
+  }
+
+  .markerItem,
+  .markerEditor {
+    grid-template-columns: 1fr;
   }
 }

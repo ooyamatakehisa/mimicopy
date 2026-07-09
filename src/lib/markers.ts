@@ -24,6 +24,16 @@ export function removeMarker(markers: Marker[], markerId: string) {
   return markers.filter((marker) => marker.id !== markerId);
 }
 
+export function updateMarker(
+  markers: Marker[],
+  markerId: string,
+  updates: Partial<Pick<Marker, "label" | "time">>
+) {
+  return markers.map((marker) =>
+    marker.id === markerId ? { ...marker, ...updates } : marker
+  );
+}
+
 export function findReturnMarker(
   markers: Marker[],
   selectedMarkerId: string | null,

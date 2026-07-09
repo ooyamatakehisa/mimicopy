@@ -38,6 +38,7 @@ import {
   findReturnMarker,
   removeMarker,
   sortMarkers,
+  updateMarker,
   type Marker
 } from "./lib/markers";
 import {
@@ -73,13 +74,13 @@ type DynamicStyle = CSSProperties & {
   [key: `--${string}`]: string;
 };
 
-function isInteractiveTarget(target: EventTarget | null) {
+function isTextEntryTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false;
   }
 
   return Boolean(
-    target.closest("input, textarea, select, button, a, [contenteditable='true']")
+    target.closest("input, textarea, select, [contenteditable='true']")
   );
 }
 
@@ -116,6 +117,7 @@ export function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
+  const draggingMarkerIdRef = useRef<string | null>(null);
   const previousObjectUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -133,10 +135,14 @@ export function App() {
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [markerInput, setMarkerInput] = useState("0:00");
+  const [markerTimeDrafts, setMarkerTimeDrafts] = useState<
+    Record<string, string>
+  >({});
   const [waveformSize, setWaveformSize] = useState({ height: 0, width: 0 });
   const [waveformZoom, setWaveformZoom] =
     useState<WaveformZoom>(defaultWaveformZoom);
   const [waveformStart, setWaveformStart] = useState(0);
+  const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
 
   const sortedMarkers = useMemo(() => sortMarkers(markers), [markers]);
   const selectedMarker = useMemo(
@@ -178,6 +184,7 @@ export function App() {
     setMarkers([]);
     setSelectedMarkerId(null);
     setMarkerInput("0:00");
+    setMarkerTimeDrafts({});
     setWaveformZoom(defaultWaveformZoom);
     setWaveformStart(0);
   }, []);
@@ -239,6 +246,64 @@ export function App() {
     addMarkerAt(parsedTime ?? currentTime);
   }, [addMarkerAt, currentTime, duration, markerInput]);
 
+  const renameMarker = useCallback((markerId: string, label: string) => {
+    setMarkers((currentMarkers) =>
+      updateMarker(currentMarkers, markerId, { label })
+    );
+  }, []);
+
+  const finishRenamingMarker = useCallback((markerId: string) => {
+    setMarkers((currentMarkers) =>
+      currentMarkers.map((marker) =>
+        marker.id === markerId && marker.label.trim().length === 0
+          ? { ...marker, label: "Marker" }
+          : marker
+      )
+    );
+  }, []);
+
+  const moveMarkerTo = useCallback(
+    (markerId: string, time: number) => {
+      const nextTime = clampTime(time, duration);
+
+      setMarkers((currentMarkers) =>
+        sortMarkers(updateMarker(currentMarkers, markerId, { time: nextTime }))
+      );
+      setSelectedMarkerId(markerId);
+      setMarkerInput(formatTime(nextTime));
+      setMarkerTimeDrafts((currentDrafts) =>
+        markerId in currentDrafts
+          ? { ...currentDrafts, [markerId]: formatTime(nextTime) }
+          : currentDrafts
+      );
+    },
+    [duration]
+  );
+
+  const changeMarkerTimeInput = useCallback(
+    (markerId: string, value: string) => {
+      setMarkerTimeDrafts((currentDrafts) => ({
+        ...currentDrafts,
+        [markerId]: value
+      }));
+
+      const parsedTime = parseTimeInput(value, duration);
+
+      if (parsedTime !== null) {
+        moveMarkerTo(markerId, parsedTime);
+      }
+    },
+    [duration, moveMarkerTo]
+  );
+
+  const finishMarkerTimeInput = useCallback((markerId: string) => {
+    setMarkerTimeDrafts((currentDrafts) => {
+      const { [markerId]: _markerDraft, ...nextDrafts } = currentDrafts;
+
+      return nextDrafts;
+    });
+  }, []);
+
   const returnToMarker = useCallback(() => {
     const marker = findReturnMarker(markers, selectedMarkerId, currentTime);
 
@@ -255,6 +320,11 @@ export function App() {
     setSelectedMarkerId((currentMarkerId) =>
       currentMarkerId === markerId ? null : currentMarkerId
     );
+    setMarkerTimeDrafts((currentDrafts) => {
+      const { [markerId]: _markerDraft, ...nextDrafts } = currentDrafts;
+
+      return nextDrafts;
+    });
   }, []);
 
   const changeWaveformZoom = useCallback(
@@ -272,7 +342,7 @@ export function App() {
 
   const handleShortcut = useCallback(
     (event: KeyboardEvent) => {
-      if (isInteractiveTarget(event.target)) {
+      if (isTextEntryTarget(event.target)) {
         return;
       }
 
@@ -422,6 +492,78 @@ export function App() {
     },
     [duration, seekTo, waveformRange]
   );
+
+  const moveMarkerFromPointer = useCallback(
+    (markerId: string, clientX: number) => {
+      const waveform = waveformRef.current;
+
+      if (!waveform || !duration) {
+        return;
+      }
+
+      const bounds = waveform.getBoundingClientRect();
+
+      if (bounds.width <= 0) {
+        return;
+      }
+
+      const ratio = clampTime((clientX - bounds.left) / bounds.width, 1);
+      const nextTime = waveformPercentToTime(ratio, waveformRange, duration);
+
+      moveMarkerTo(markerId, nextTime);
+    },
+    [duration, moveMarkerTo, waveformRange]
+  );
+
+  const startDraggingMarker = useCallback((markerId: string) => {
+    draggingMarkerIdRef.current = markerId;
+    setDraggingMarkerId(markerId);
+  }, []);
+
+  const stopDraggingMarker = useCallback(() => {
+    draggingMarkerIdRef.current = null;
+    setDraggingMarkerId(null);
+  }, []);
+
+  useEffect(() => {
+    const moveDraggedMarker = (clientX: number) => {
+      const markerId = draggingMarkerIdRef.current;
+
+      if (markerId) {
+        moveMarkerFromPointer(markerId, clientX);
+      }
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!draggingMarkerIdRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      moveDraggedMarker(event.clientX);
+    };
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!draggingMarkerIdRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      moveDraggedMarker(event.clientX);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDraggingMarker);
+    window.addEventListener("pointercancel", stopDraggingMarker);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", stopDraggingMarker);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDraggingMarker);
+      window.removeEventListener("pointercancel", stopDraggingMarker);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", stopDraggingMarker);
+    };
+  }, [moveMarkerFromPointer, stopDraggingMarker]);
 
   useEffect(() => {
     return () => {
@@ -686,10 +828,70 @@ export function App() {
                   key={marker.id}
                   className={`markerLine ${
                     marker.id === selectedMarkerId ? "selected" : ""
-                  }`}
+                  } ${marker.id === draggingMarkerId ? "dragging" : ""}`}
+                  draggable
                   style={style}
                   type="button"
                   title={`${marker.label} ${formatTime(marker.time)}`}
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", marker.id);
+                    setSelectedMarkerId(marker.id);
+                    startDraggingMarker(marker.id);
+                    moveMarkerFromPointer(marker.id, event.clientX);
+                  }}
+                  onDrag={(event) => {
+                    if (
+                      draggingMarkerIdRef.current !== marker.id ||
+                      event.clientX <= 0
+                    ) {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+                    moveMarkerFromPointer(marker.id, event.clientX);
+                  }}
+                  onDragEnd={(event) => {
+                    event.stopPropagation();
+
+                    if (event.clientX > 0) {
+                      moveMarkerFromPointer(marker.id, event.clientX);
+                    }
+
+                    stopDraggingMarker();
+                  }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    setSelectedMarkerId(marker.id);
+                    startDraggingMarker(marker.id);
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    moveMarkerFromPointer(marker.id, event.clientX);
+                  }}
+                  onPointerMove={(event) => {
+                    if (draggingMarkerIdRef.current !== marker.id) {
+                      return;
+                    }
+
+                    event.stopPropagation();
+                    moveMarkerFromPointer(marker.id, event.clientX);
+                  }}
+                  onPointerUp={(event) => {
+                    event.stopPropagation();
+                    stopDraggingMarker();
+
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                    }
+                  }}
+                  onPointerCancel={(event) => {
+                    stopDraggingMarker();
+
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId);
+                    }
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     setSelectedMarkerId(marker.id);
@@ -744,7 +946,7 @@ export function App() {
             <button
               className="iconButton accent"
               type="button"
-              title="マーカー追加"
+              title="入力時刻にマーカー追加"
               disabled={!audioSource}
               onClick={addMarkerFromInput}
             >
@@ -763,8 +965,29 @@ export function App() {
                     marker.id === selectedMarkerId ? "selected" : ""
                   }`}
                 >
+                  <div className="markerEditor">
+                    <input
+                      aria-label={`${marker.label} label`}
+                      className="markerLabelInput"
+                      value={marker.label}
+                      onBlur={() => finishRenamingMarker(marker.id)}
+                      onChange={(event) =>
+                        renameMarker(marker.id, event.target.value)
+                      }
+                    />
+                    <input
+                      aria-label={`${marker.label} time`}
+                      className="markerTimeInput"
+                      inputMode="numeric"
+                      value={markerTimeDrafts[marker.id] ?? formatTime(marker.time)}
+                      onBlur={() => finishMarkerTimeInput(marker.id)}
+                      onChange={(event) =>
+                        changeMarkerTimeInput(marker.id, event.target.value)
+                      }
+                    />
+                  </div>
                   <button
-                    className="markerJump"
+                    className="iconButton"
                     type="button"
                     title="マーカーへ移動"
                     onClick={() => {
@@ -772,8 +995,7 @@ export function App() {
                       seekTo(marker.time);
                     }}
                   >
-                    <span>{marker.label}</span>
-                    <strong>{formatTime(marker.time)}</strong>
+                    <MapPin size={17} />
                   </button>
                   <button
                     className="iconButton danger"
@@ -837,6 +1059,16 @@ export function App() {
             onClick={() => seekTo(seekBy(currentTime, 10, duration))}
           >
             <span>+10s</span>
+          </button>
+          <button
+            className="transportButton accent"
+            type="button"
+            title="現在位置にマーカー追加"
+            disabled={!audioSource}
+            onClick={() => addMarkerAt(currentTime)}
+          >
+            <MapPin size={18} />
+            <span>Marker</span>
           </button>
         </div>
 
