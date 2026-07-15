@@ -98,6 +98,7 @@ export function TrackEditorPage({
 
   return (
     <TrackEditor
+      key={track.id}
       track={track}
       decoded={decodedQuery.data}
       navigateToLibrary={navigateToLibrary}

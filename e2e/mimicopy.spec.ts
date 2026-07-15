@@ -50,6 +50,46 @@ async function expectWaveformCanvas(page: Page) {
     .toBe(true);
 }
 
+async function expectInitialPlaybackPosition(page: Page) {
+  await expect(page.getByLabel("再生位置")).toHaveAttribute("aria-valuenow", "0");
+  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+    "0:00 /"
+  );
+
+  const mediaState = await page.locator("audio").evaluate((audioElement) => {
+    const audio = audioElement as HTMLAudioElement;
+
+    return {
+      currentTime: audio.currentTime,
+      duration: audio.duration
+    };
+  });
+  const playheadLeft = await page
+    .locator(".waveformSurface > div")
+    .last()
+    .evaluate((element) => {
+      const waveform = element.parentElement;
+      const canvas = waveform?.querySelector("canvas");
+
+      if (!waveform || !canvas) {
+        throw new Error("Waveform surface or canvas was not found.");
+      }
+
+      return {
+        computedLeft: Math.round(
+          element.getBoundingClientRect().left -
+            canvas.getBoundingClientRect().left
+        ),
+        style: element.getAttribute("style") ?? ""
+      };
+    });
+
+  expect(mediaState.currentTime).toBe(0);
+  expect(mediaState.duration).toBeGreaterThan(0);
+  expect(playheadLeft.style).toContain("--playhead-left: 0%");
+  expect(playheadLeft.computedLeft).toBe(0);
+}
+
 test("loads audio and supports the main playback and marker workflow", async ({
   page
 }) => {
@@ -75,6 +115,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
+  await expectInitialPlaybackPosition(page);
 
   await page.getByTitle("再生").click();
   await expect(page.getByTitle("停止")).toBeVisible();
@@ -168,6 +209,7 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
   );
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expectWaveformCanvas(page);
+  await expectInitialPlaybackPosition(page);
 
   const mediaState = await page.locator("audio").evaluate((audioElement) => {
     const audio = audioElement as HTMLAudioElement;

@@ -26,6 +26,21 @@ type WaveformPanelProps = {
   waveformRange: WaveformRange;
 };
 
+function getWaveformInteractionBounds(
+  waveform: HTMLElement | null,
+  canvas: HTMLCanvasElement | null
+) {
+  const canvasBounds = canvas?.getBoundingClientRect();
+
+  if (canvasBounds && canvasBounds.width > 0) {
+    return canvasBounds;
+  }
+
+  const waveformBounds = waveform?.getBoundingClientRect();
+
+  return waveformBounds && waveformBounds.width > 0 ? waveformBounds : null;
+}
+
 export function WaveformPanel({
   currentTime,
   duration,
@@ -64,7 +79,15 @@ export function WaveformPanel({
         return;
       }
 
-      const bounds = event.currentTarget.getBoundingClientRect();
+      const bounds = getWaveformInteractionBounds(
+        event.currentTarget,
+        canvasRef.current
+      );
+
+      if (!bounds) {
+        return;
+      }
+
       const ratio = clampTime((event.clientX - bounds.left) / bounds.width, 1);
 
       seekTo(waveformPercentToTime(ratio, waveformRange, duration));
@@ -80,9 +103,9 @@ export function WaveformPanel({
         return;
       }
 
-      const bounds = waveform.getBoundingClientRect();
+      const bounds = getWaveformInteractionBounds(waveform, canvasRef.current);
 
-      if (bounds.width <= 0) {
+      if (!bounds) {
         return;
       }
 
