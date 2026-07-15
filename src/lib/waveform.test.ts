@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  aggregateVisibleWaveformPeaks,
   buildWaveformPeaks,
   centerWaveformRange,
   getWaveformRange,
@@ -24,6 +25,48 @@ describe("waveform helpers", () => {
     expect(peaks).toEqual([
       { max: 0.5, min: -1 },
       { max: 1, min: -0.25 }
+    ]);
+  });
+
+  it("aggregates dense peaks into the available full-range columns", () => {
+    const peaks = [
+      { max: 1, min: -1 },
+      { max: 0.8, min: -0.8 },
+      { max: 0, min: 0 },
+      { max: 0, min: 0 }
+    ];
+
+    expect(
+      aggregateVisibleWaveformPeaks({
+        columnCount: 2,
+        duration: 4,
+        peaks,
+        range: { end: 4, start: 0 }
+      })
+    ).toEqual([
+      { max: 1, min: -1 },
+      { max: 0, min: 0 }
+    ]);
+  });
+
+  it("aggregates only the peaks inside a zoomed visible range", () => {
+    const peaks = [
+      { max: 0, min: 0 },
+      { max: 0.3, min: -0.3 },
+      { max: 1, min: -1 },
+      { max: 0, min: 0 }
+    ];
+
+    expect(
+      aggregateVisibleWaveformPeaks({
+        columnCount: 2,
+        duration: 4,
+        peaks,
+        range: { end: 4, start: 2 }
+      })
+    ).toEqual([
+      { max: 1, min: -1 },
+      { max: 0, min: 0 }
     ]);
   });
 

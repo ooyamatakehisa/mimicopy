@@ -5,6 +5,7 @@ import type { LoadState } from "../../lib/loadState";
 import type { Marker } from "../../lib/markers";
 import { clampTime, formatTime } from "../../lib/playback";
 import {
+  aggregateVisibleWaveformPeaks,
   timeToWaveformPercent,
   waveformPercentToTime,
   type WaveformPeak,
@@ -226,25 +227,21 @@ export function WaveformPanel({
       return;
     }
 
+    const visiblePeaks = aggregateVisibleWaveformPeaks({
+      columnCount: cssWidth,
+      duration,
+      peaks,
+      range: waveformRange
+    });
+
+    if (visiblePeaks.length === 0) {
+      context.fillStyle = "rgba(244, 247, 245, 0.18)";
+      context.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
+      return;
+    }
+
     const centerY = cssHeight / 2;
-    const hasTimeline = duration > 0 && waveformRange.end > waveformRange.start;
-    const startIndex = hasTimeline
-      ? Math.max(
-          0,
-          Math.floor((waveformRange.start / duration) * peaks.length)
-        )
-      : 0;
-    const endIndex = hasTimeline
-      ? Math.min(
-          peaks.length,
-          Math.max(
-            startIndex + 1,
-            Math.ceil((waveformRange.end / duration) * peaks.length)
-          )
-        )
-      : peaks.length;
-    const visiblePeaks = peaks.slice(startIndex, endIndex);
-    const barWidth = Math.max(1, cssWidth / visiblePeaks.length);
+    const barWidth = cssWidth / visiblePeaks.length;
 
     context.fillStyle = gradient;
 
@@ -256,7 +253,7 @@ export function WaveformPanel({
       const y = centerY - max * centerY;
       const barHeight = Math.max(1, (max - min) * centerY);
 
-      context.fillRect(x, y, Math.max(1, barWidth * 0.82), barHeight);
+      context.fillRect(x, y, Math.max(1, barWidth), barHeight);
     }
   }, [duration, peaks, waveformRange, waveformSize]);
 

@@ -54,6 +54,60 @@ export function buildWaveformPeaks(
   return peaks;
 }
 
+export function aggregateVisibleWaveformPeaks({
+  columnCount,
+  duration,
+  peaks,
+  range
+}: {
+  columnCount: number;
+  duration: number;
+  peaks: WaveformPeak[];
+  range: WaveformRange;
+}) {
+  const safeColumnCount = Math.max(1, Math.floor(columnCount));
+  const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
+  const visibleDuration = range.end - range.start;
+
+  if (peaks.length === 0 || safeDuration <= 0 || visibleDuration <= 0) {
+    return [];
+  }
+
+  const startRatio = Math.min(Math.max(0, range.start / safeDuration), 1);
+  const endRatio = Math.min(Math.max(startRatio, range.end / safeDuration), 1);
+  const startPeak = startRatio * peaks.length;
+  const endPeak = Math.max(startPeak + 1, endRatio * peaks.length);
+  const peakSpan = endPeak - startPeak;
+
+  return Array.from({ length: safeColumnCount }, (_, columnIndex) => {
+    const columnStart = startPeak + (peakSpan * columnIndex) / safeColumnCount;
+    const columnEnd =
+      startPeak + (peakSpan * (columnIndex + 1)) / safeColumnCount;
+    const startIndex = Math.min(
+      peaks.length - 1,
+      Math.max(0, Math.floor(columnStart))
+    );
+    const endIndex = Math.min(
+      peaks.length,
+      Math.max(startIndex + 1, Math.ceil(columnEnd))
+    );
+    let min = 1;
+    let max = -1;
+
+    for (let peakIndex = startIndex; peakIndex < endIndex; peakIndex += 1) {
+      const peak = peaks[peakIndex];
+
+      min = Math.min(min, peak.min);
+      max = Math.max(max, peak.max);
+    }
+
+    return {
+      max: Number.isFinite(max) ? max : 0,
+      min: Number.isFinite(min) ? min : 0
+    };
+  });
+}
+
 export function nextWaveformZoom(
   currentZoom: number,
   direction: "in" | "out"
