@@ -47,22 +47,26 @@ Object.defineProperty(URL, "revokeObjectURL", {
   value: vi.fn()
 });
 
-Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
-  configurable: true,
-  value: vi.fn(() => canvasContext)
-});
+if (typeof HTMLCanvasElement !== "undefined") {
+  Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+    configurable: true,
+    value: vi.fn(() => canvasContext)
+  });
+}
 
-Object.defineProperties(HTMLElement.prototype, {
-  hasPointerCapture: {
-    configurable: true,
-    value: vi.fn(() => true)
-  },
-  releasePointerCapture: {
-    configurable: true,
-    value: vi.fn()
-  },
-  setPointerCapture: {
-    configurable: true,
-    value: vi.fn()
-  }
-});
+if (typeof HTMLElement !== "undefined") {
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: {
+      configurable: true,
+      value: vi.fn(() => true)
+    },
+    releasePointerCapture: {
+      configurable: true,
+      value: vi.fn()
+    },
+    setPointerCapture: {
+      configurable: true,
+      value: vi.fn()
+    }
+  });
+}

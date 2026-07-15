@@ -2,11 +2,14 @@ import {
   Clock3,
   Gauge,
   Link,
+  ListMusic,
   LoaderCircle,
   MapPin,
+  Music2,
   Pause,
   Play,
   Plus,
+  RefreshCcw,
   RotateCcw,
   Trash2,
   Upload,
@@ -42,6 +45,14 @@ import {
   type Marker
 } from "./lib/markers";
 import {
+  getErrorMessage,
+  parseTrackListResponse,
+  parseTrackResponse,
+  type LibrarySourceType,
+  type TrackDetail,
+  type TrackSummary
+} from "./lib/library";
+import {
   buildWaveformPeaks,
   centerWaveformRange,
   defaultWaveformZoom,
@@ -55,24 +66,29 @@ import {
 } from "./lib/waveform";
 
 type AudioSource = {
-  kind: "file" | "youtube";
+  kind: LibrarySourceType;
   name: string;
   url: string;
-  objectUrl?: string;
 };
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 
-type ConvertResponse = {
-  mediaUrl?: unknown;
-  title?: unknown;
-  duration?: unknown;
-  error?: unknown;
-};
-
 type DynamicStyle = CSSProperties & {
   [key: `--${string}`]: string;
 };
+
+type SourceOptions = {
+  currentTrackId: string | null;
+  durationHint?: number;
+  markers?: Marker[];
+};
+
+const libraryDateFormatter = new Intl.DateTimeFormat("ja-JP", {
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  month: "numeric"
+});
 
 function isTextEntryTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
@@ -99,18 +115,49 @@ async function decodePeaksFromArrayBuffer(arrayBuffer: ArrayBuffer) {
   }
 }
 
-function getConvertedSource(body: ConvertResponse) {
-  if (typeof body.mediaUrl !== "string" || body.mediaUrl.length === 0) {
-    throw new Error(
-      typeof body.error === "string" ? body.error : "YouTube conversion failed."
-    );
+async function parseJsonResponse(response: Response, fallback: string) {
+  const body = (await response.json().catch(() => null)) as unknown;
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(body, fallback));
   }
 
+  return body;
+}
+
+function toTrackSummary(track: TrackDetail): TrackSummary {
   return {
-    duration: typeof body.duration === "number" ? body.duration : 0,
-    title: typeof body.title === "string" ? body.title : "YouTube audio",
-    url: body.mediaUrl
+    createdAt: track.createdAt,
+    duration: track.duration,
+    id: track.id,
+    markerCount: track.markerCount,
+    mediaUrl: track.mediaUrl,
+    sourceType: track.sourceType,
+    title: track.title,
+    updatedAt: track.updatedAt
   };
+}
+
+function formatLibraryDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return libraryDateFormatter.format(date);
+}
+
+function getSourceTypeLabel(sourceType: LibrarySourceType) {
+  if (sourceType === "youtube") {
+    return "YouTube";
+  }
+
+  if (sourceType === "imported") {
+    return "Imported";
+  }
+
+  return "MP3";
 }
 
 export function App() {
@@ -118,9 +165,13 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
   const draggingMarkerIdRef = useRef<string | null>(null);
-  const previousObjectUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [libraryTracks, setLibraryTracks] = useState<TrackSummary[]>([]);
+  const [isLibraryLoading, setIsLibraryLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSavingMarkers, setIsSavingMarkers] = useState(false);
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [audioSource, setAudioSource] = useState<AudioSource | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [message, setMessage] = useState("MP3かYouTube URLを読み込んでください。");
@@ -166,16 +217,48 @@ export function App() {
     "--marker-left": "0%",
     "--playhead-left": `${playheadPercent}%`
   };
+  const currentTrack = useMemo(
+    () => libraryTracks.find((track) => track.id === currentTrackId) ?? null,
+    [currentTrackId, libraryTracks]
+  );
 
-  const setSource = useCallback((source: AudioSource) => {
-    if (previousObjectUrlRef.current) {
-      URL.revokeObjectURL(previousObjectUrlRef.current);
-    }
+  const updateLibraryTrack = useCallback((track: TrackDetail) => {
+    const summary = toTrackSummary(track);
 
-    previousObjectUrlRef.current = source.objectUrl ?? null;
+    setLibraryTracks((currentTracks) => {
+      const withoutTrack = currentTracks.filter(
+        (currentTrackItem) => currentTrackItem.id !== summary.id
+      );
+
+      return [summary, ...withoutTrack].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt)
+      );
+    });
+  }, []);
+
+  const setSource = useCallback((source: AudioSource, options: SourceOptions) => {
+    setCurrentTrackId(options.currentTrackId);
     setAudioSource(source);
     setLoadState("loading");
     setMessage(`${source.name} を読み込み中です。`);
+    setPeaks([]);
+    setDuration(options.durationHint ?? 0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setPlaybackRate(defaultPlaybackRate);
+    setMarkers(sortMarkers(options.markers ?? []));
+    setSelectedMarkerId(null);
+    setMarkerInput("0:00");
+    setMarkerTimeDrafts({});
+    setWaveformZoom(defaultWaveformZoom);
+    setWaveformStart(0);
+  }, []);
+
+  const resetWorkspace = useCallback(() => {
+    setCurrentTrackId(null);
+    setAudioSource(null);
+    setLoadState("idle");
+    setMessage("MP3かYouTube URLを読み込んでください。");
     setPeaks([]);
     setDuration(0);
     setCurrentTime(0);
@@ -188,6 +271,122 @@ export function App() {
     setWaveformZoom(defaultWaveformZoom);
     setWaveformStart(0);
   }, []);
+
+  const loadLibrary = useCallback(() => {
+    setIsLibraryLoading(true);
+
+    void fetch("/api/tracks")
+      .then((response) =>
+        parseJsonResponse(response, "ライブラリ一覧を読み込めませんでした。")
+      )
+      .then(parseTrackListResponse)
+      .then(setLibraryTracks)
+      .catch((error: unknown) => {
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "ライブラリ一覧を読み込めませんでした。"
+        );
+      })
+      .finally(() => {
+        setIsLibraryLoading(false);
+      });
+  }, []);
+
+  const saveTrackDuration = useCallback(
+    async (trackId: string, nextDuration: number) => {
+      const response = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+        body: JSON.stringify({ duration: nextDuration }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH"
+      });
+      const body = await parseJsonResponse(
+        response,
+        "曲の長さを保存できませんでした。"
+      );
+      const track = parseTrackResponse(body);
+
+      updateLibraryTrack(track);
+
+      return track;
+    },
+    [updateLibraryTrack]
+  );
+
+  const completeTrackLoad = useCallback(
+    (track: TrackDetail, decoded: Awaited<ReturnType<typeof decodePeaksFromArrayBuffer>>) => {
+      const decodedDuration = decoded.duration || track.duration;
+
+      setSource(
+        {
+          kind: track.sourceType,
+          name: track.title,
+          url: track.mediaUrl
+        },
+        {
+          currentTrackId: track.id,
+          durationHint: decodedDuration,
+          markers: track.markers
+        }
+      );
+      setPeaks(decoded.peaks);
+      setDuration(decodedDuration);
+      setLoadState("ready");
+      setMessage(`${track.title} を読み込みました。`);
+      updateLibraryTrack({ ...track, duration: decodedDuration });
+
+      if (Math.abs(decodedDuration - track.duration) > 0.25) {
+        void saveTrackDuration(track.id, decodedDuration).catch(() => undefined);
+      }
+    },
+    [saveTrackDuration, setSource, updateLibraryTrack]
+  );
+
+  const loadTrackFromLibrary = useCallback(
+    (trackId: string) => {
+      setLoadState("loading");
+
+      void fetch(`/api/tracks/${encodeURIComponent(trackId)}`)
+        .then((response) =>
+          parseJsonResponse(response, "保存済みMP3を読み込めませんでした。")
+        )
+        .then(parseTrackResponse)
+        .then(async (track) => {
+          setSource(
+            {
+              kind: track.sourceType,
+              name: track.title,
+              url: track.mediaUrl
+            },
+            {
+              currentTrackId: track.id,
+              durationHint: track.duration,
+              markers: track.markers
+            }
+          );
+
+          const mediaResponse = await fetch(track.mediaUrl);
+
+          if (!mediaResponse.ok) {
+            throw new Error("保存済みMP3ファイルを読み込めませんでした。");
+          }
+
+          const arrayBuffer = await mediaResponse.arrayBuffer();
+          const decoded = await decodePeaksFromArrayBuffer(arrayBuffer);
+
+          completeTrackLoad(track, decoded);
+        })
+        .catch((error: unknown) => {
+          setLoadState("error");
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "保存済みMP3を読み込めませんでした。"
+          );
+        });
+    },
+    [completeTrackLoad, setSource]
+  );
 
   const seekTo = useCallback(
     (time: number) => {
@@ -353,6 +552,8 @@ export function App() {
       }
 
       event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
 
       if (command.type === "togglePlayback") {
         togglePlayback();
@@ -389,31 +590,43 @@ export function App() {
         return;
       }
 
-      const objectUrl = URL.createObjectURL(file);
-      setSource({
-        kind: "file",
-        name: file.name,
-        objectUrl,
-        url: objectUrl
-      });
+      const input = event.currentTarget;
 
-      void file
-        .arrayBuffer()
-        .then(decodePeaksFromArrayBuffer)
-        .then(({ duration: decodedDuration, peaks: decodedPeaks }) => {
-          setPeaks(decodedPeaks);
-          setDuration(decodedDuration);
-          setLoadState("ready");
-          setMessage(`${file.name} を読み込みました。`);
+      setIsUploading(true);
+      setLoadState("loading");
+      setMessage(`${file.name} を保存しています。`);
+
+      void fetch("/api/tracks", {
+        body: file,
+        headers: {
+          "Content-Type": file.type || "audio/mpeg",
+          "X-File-Name": encodeURIComponent(file.name)
+        },
+        method: "POST"
+      })
+        .then((response) =>
+          parseJsonResponse(response, "MP3を保存できませんでした。")
+        )
+        .then(parseTrackResponse)
+        .then(async (track) => {
+          const decoded = await file
+            .arrayBuffer()
+            .then(decodePeaksFromArrayBuffer);
+
+          completeTrackLoad(track, decoded);
         })
         .catch((error: unknown) => {
           setLoadState("error");
           setMessage(
-            error instanceof Error ? error.message : "波形の解析に失敗しました。"
+            error instanceof Error ? error.message : "MP3の保存に失敗しました。"
           );
+        })
+        .finally(() => {
+          input.value = "";
+          setIsUploading(false);
         });
     },
-    [setSource]
+    [completeTrackLoad]
   );
 
   const handleYoutubeSubmit = useCallback(
@@ -434,34 +647,22 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         method: "POST"
       })
-        .then(async (response) => {
-          const body = (await response.json()) as ConvertResponse;
+        .then((response) =>
+          parseJsonResponse(response, "YouTube変換に失敗しました。")
+        )
+        .then(parseTrackResponse)
+        .then(async (track) => {
+          const response = await fetch(track.mediaUrl);
 
           if (!response.ok) {
-            throw new Error(
-              typeof body.error === "string"
-                ? body.error
-                : "YouTube conversion failed."
-            );
+            throw new Error("変換済みMP3を読み込めませんでした。");
           }
 
-          return getConvertedSource(body);
-        })
-        .then(async (convertedSource) => {
-          setSource({
-            kind: "youtube",
-            name: convertedSource.title,
-            url: convertedSource.url
-          });
-
-          const response = await fetch(convertedSource.url);
           const arrayBuffer = await response.arrayBuffer();
           const decoded = await decodePeaksFromArrayBuffer(arrayBuffer);
 
-          setDuration(decoded.duration || convertedSource.duration);
-          setPeaks(decoded.peaks);
-          setLoadState("ready");
-          setMessage(`${convertedSource.title} を読み込みました。`);
+          completeTrackLoad(track, decoded);
+          setYoutubeUrl("");
         })
         .catch((error: unknown) => {
           setLoadState("error");
@@ -473,7 +674,45 @@ export function App() {
           setIsConverting(false);
         });
     },
-    [setSource, youtubeUrl]
+    [completeTrackLoad, youtubeUrl]
+  );
+
+  const deleteTrackFromLibrary = useCallback(
+    (trackId: string) => {
+      const track = libraryTracks.find(
+        (libraryTrack) => libraryTrack.id === trackId
+      );
+
+      if (!track || !window.confirm(`${track.title} を削除しますか？`)) {
+        return;
+      }
+
+      void fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+        method: "DELETE"
+      })
+        .then((response) =>
+          parseJsonResponse(response, "保存済みMP3を削除できませんでした。")
+        )
+        .then(() => {
+          setLibraryTracks((currentTracks) =>
+            currentTracks.filter(
+              (currentTrackItem) => currentTrackItem.id !== trackId
+            )
+          );
+
+          if (currentTrackId === trackId) {
+            resetWorkspace();
+          }
+        })
+        .catch((error: unknown) => {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "保存済みMP3を削除できませんでした。"
+          );
+        });
+    },
+    [currentTrackId, libraryTracks, resetWorkspace]
   );
 
   const handleWaveformPointerDown = useCallback(
@@ -526,6 +765,51 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    loadLibrary();
+  }, [loadLibrary]);
+
+  useEffect(() => {
+    if (!currentTrackId || loadState !== "ready") {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setIsSavingMarkers(true);
+
+      void fetch(`/api/tracks/${encodeURIComponent(currentTrackId)}/markers`, {
+        body: JSON.stringify({
+          markers: sortedMarkers.map((marker) => ({
+            id: marker.id,
+            label: marker.label.trim() || "Marker",
+            time: marker.time
+          }))
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT"
+      })
+        .then((response) =>
+          parseJsonResponse(response, "マーカーを保存できませんでした。")
+        )
+        .then(parseTrackResponse)
+        .then(updateLibraryTrack)
+        .catch((error: unknown) => {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "マーカーを保存できませんでした。"
+          );
+        })
+        .finally(() => {
+          setIsSavingMarkers(false);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [currentTrackId, loadState, sortedMarkers, updateLibraryTrack]);
+
+  useEffect(() => {
     const moveDraggedMarker = (clientX: number) => {
       const markerId = draggingMarkerIdRef.current;
 
@@ -566,14 +850,6 @@ export function App() {
   }, [moveMarkerFromPointer, stopDraggingMarker]);
 
   useEffect(() => {
-    return () => {
-      if (previousObjectUrlRef.current) {
-        URL.revokeObjectURL(previousObjectUrlRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     const audio = audioRef.current;
 
     if (!audio) {
@@ -605,10 +881,16 @@ export function App() {
   }, [isPlaying]);
 
   useEffect(() => {
-    window.addEventListener("keydown", handleShortcut);
+    const shortcutListenerOptions = { capture: true } as const;
+
+    window.addEventListener("keydown", handleShortcut, shortcutListenerOptions);
 
     return () => {
-      window.removeEventListener("keydown", handleShortcut);
+      window.removeEventListener(
+        "keydown",
+        handleShortcut,
+        shortcutListenerOptions
+      );
     };
   }, [handleShortcut]);
 
@@ -740,7 +1022,13 @@ export function App() {
           <span className="brandMark">M</span>
           <div>
             <h1>Mimicopy</h1>
-            <p>{audioSource?.name ?? "耳コピ用ワークスペース"}</p>
+            <p>
+              {currentTrack
+                ? `${currentTrack.title} ・ ${
+                    isSavingMarkers ? "マーカー保存中" : "保存済み"
+                  }`
+                : "耳コピ用ワークスペース"}
+            </p>
           </div>
         </div>
 
@@ -756,10 +1044,15 @@ export function App() {
             className="controlButton"
             type="button"
             title="MP3を選択"
+            disabled={isUploading}
             onClick={() => fileInputRef.current?.click()}
           >
-            <Upload size={18} />
-            <span>MP3</span>
+            {isUploading ? (
+              <LoaderCircle className="spin" size={18} />
+            ) : (
+              <Upload size={18} />
+            )}
+            <span>{isUploading ? "保存中" : "MP3"}</span>
           </button>
 
           <form className="youtubeForm" onSubmit={handleYoutubeSubmit}>
@@ -792,6 +1085,75 @@ export function App() {
       </header>
 
       <section className="studioGrid" aria-label="Audio editor">
+        <aside className="libraryPanel" aria-label="Saved MP3 library">
+          <div className="panelHeader">
+            <div>
+              <h2>Library</h2>
+              <p>{libraryTracks.length} saved MP3s</p>
+            </div>
+            <button
+              className="iconButton"
+              type="button"
+              title="一覧を更新"
+              disabled={isLibraryLoading}
+              onClick={loadLibrary}
+            >
+              {isLibraryLoading ? (
+                <LoaderCircle className="spin" size={18} />
+              ) : (
+                <RefreshCcw size={18} />
+              )}
+            </button>
+          </div>
+
+          <div className="libraryList">
+            {libraryTracks.length === 0 ? (
+              <div className="emptyMarkers">
+                <ListMusic size={22} aria-hidden="true" />
+                <span>
+                  {isLibraryLoading
+                    ? "読み込み中"
+                    : "保存済みMP3はまだありません"}
+                </span>
+              </div>
+            ) : (
+              libraryTracks.map((track) => (
+                <div
+                  key={track.id}
+                  className={`libraryItem ${
+                    track.id === currentTrackId ? "active" : ""
+                  }`}
+                >
+                  <button
+                    className="libraryTrackButton"
+                    type="button"
+                    title={`${track.title} を開く`}
+                    onClick={() => loadTrackFromLibrary(track.id)}
+                  >
+                    <Music2 size={18} aria-hidden="true" />
+                    <span className="libraryTrackText">
+                      <strong>{track.title}</strong>
+                      <span>
+                        {getSourceTypeLabel(track.sourceType)} ・{" "}
+                        {formatTime(track.duration)} ・ {track.markerCount} markers
+                      </span>
+                      <span>Updated {formatLibraryDate(track.updatedAt)}</span>
+                    </span>
+                  </button>
+                  <button
+                    className="iconButton danger"
+                    type="button"
+                    title="保存済みMP3を削除"
+                    onClick={() => deleteTrackFromLibrary(track.id)}
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+
         <section className="workspace" aria-label="Waveform">
           <div className="timelineMeta">
             <span className={`statusPill ${loadState}`}>{loadState}</span>

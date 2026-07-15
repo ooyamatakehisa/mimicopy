@@ -86,6 +86,7 @@ export type ShortcutCommand =
 
 type ShortcutEvent = {
   key: string;
+  code?: string;
   shiftKey?: boolean;
   metaKey?: boolean;
   ctrlKey?: boolean;
@@ -99,11 +100,17 @@ export function getShortcutCommand(event: ShortcutEvent): ShortcutCommand | null
 
   const key = event.key.toLowerCase();
 
-  if (event.shiftKey && (event.key === "." || event.key === ">")) {
+  if (
+    event.shiftKey &&
+    (event.key === "." || event.key === ">" || event.code === "Period")
+  ) {
     return { direction: "faster", type: "speed" };
   }
 
-  if (event.shiftKey && (event.key === "," || event.key === "<")) {
+  if (
+    event.shiftKey &&
+    (event.key === "," || event.key === "<" || event.code === "Comma")
+  ) {
     return { direction: "slower", type: "speed" };
   }
 

@@ -5,16 +5,144 @@ import {
   waitFor,
   within
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { TrackDetail, TrackSummary } from "./lib/library";
+
+const baseTimestamp = "2026-07-15T00:00:00.000Z";
+
+function toSummary(track: TrackDetail): TrackSummary {
+  return {
+    createdAt: track.createdAt,
+    duration: track.duration,
+    id: track.id,
+    markerCount: track.markerCount,
+    mediaUrl: track.mediaUrl,
+    sourceType: track.sourceType,
+    title: track.title,
+    updatedAt: track.updatedAt
+  };
+}
+
+function createTrack(overrides: Partial<TrackDetail> = {}): TrackDetail {
+  return {
+    createdAt: baseTimestamp,
+    duration: 10,
+    id: "track-1",
+    markerCount: overrides.markers?.length ?? 0,
+    markers: [],
+    mediaUrl: "/media/track-1.mp3",
+    sourceType: "upload",
+    title: "phrase.mp3",
+    updatedAt: baseTimestamp,
+    ...overrides
+  };
+}
 
 describe("App", () => {
+  let tracks: TrackDetail[];
+
+  beforeEach(() => {
+    tracks = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        const method = init?.method ?? "GET";
+
+        if (url === "/api/tracks" && method === "GET") {
+          return Response.json({ tracks: tracks.map(toSummary) });
+        }
+
+        if (url === "/api/tracks" && method === "POST") {
+          const encodedName = init?.headers
+            ? new Headers(init.headers).get("X-File-Name")
+            : null;
+          const title = encodedName ? decodeURIComponent(encodedName) : "phrase.mp3";
+          const track = createTrack({ title });
+
+          tracks = [track, ...tracks];
+
+          return Response.json({ track }, { status: 201 });
+        }
+
+        if (url === "/api/tracks/track-1" && method === "GET") {
+          return Response.json({ track: tracks[0] ?? createTrack() });
+        }
+
+        if (url === "/api/tracks/track-1" && method === "PATCH") {
+          const track = { ...(tracks[0] ?? createTrack()), duration: 10 };
+          tracks = [track];
+
+          return Response.json({ track });
+        }
+
+        if (url === "/api/tracks/track-1/markers" && method === "PUT") {
+          const body =
+            typeof init?.body === "string"
+              ? (JSON.parse(init.body) as { markers?: TrackDetail["markers"] })
+              : {};
+          const markers = Array.isArray(body.markers) ? body.markers : [];
+          const track = {
+            ...(tracks[0] ?? createTrack()),
+            markerCount: markers.length,
+            markers
+          };
+          tracks = [track];
+
+          return Response.json({ track });
+        }
+
+        if (url === "/media/track-1.mp3") {
+          return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+        }
+
+        return Response.json({ error: `Unhandled request: ${method} ${url}` }, {
+          status: 500
+        });
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("renders the editor shell", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Mimicopy" })).toBeVisible();
     expect(screen.getByText("0:00 / 0:00")).toBeVisible();
     expect(screen.getByPlaceholderText("https://www.youtube.com/watch?v=...")).toBeVisible();
+  });
+
+  it("opens a saved mp3 from the library", async () => {
+    tracks = [
+      createTrack({
+        markerCount: 1,
+        markers: [{ id: "marker-1", label: "Verse", time: 3 }],
+        title: "saved-phrase.mp3"
+      })
+    ];
+
+    render(<App />);
+
+    const savedTrackButton = await screen.findByTitle("saved-phrase.mp3 を開く");
+
+    fireEvent.click(savedTrackButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("saved-phrase.mp3 を読み込みました。")).toBeVisible();
+    });
+
+    expect(screen.getByDisplayValue("Verse")).toBeVisible();
+    expect(screen.getByLabelText("Verse time")).toHaveValue("0:03");
   });
 
   it("changes playback speed with keyboard shortcuts while a button is focused", () => {
@@ -29,6 +157,34 @@ describe("App", () => {
 
     fireEvent.keyDown(speedDownButton, { key: ".", shiftKey: true });
     expect(within(speedControls).getByText("1x")).toBeVisible();
+  });
+
+  it("claims playback speed shortcuts before later page listeners", () => {
+    render(<App />);
+    const speedControls = screen.getByLabelText("Playback speed");
+    const speedDownButton = screen.getByTitle("速度を下げる");
+    const windowListener = vi.fn();
+    const documentListener = vi.fn();
+    const listenerOptions = { capture: true } as const;
+
+    window.addEventListener("keydown", windowListener, listenerOptions);
+    document.addEventListener("keydown", documentListener, listenerOptions);
+
+    try {
+      speedDownButton.focus();
+      fireEvent.keyDown(speedDownButton, {
+        code: "Comma",
+        key: "Unidentified",
+        shiftKey: true
+      });
+
+      expect(within(speedControls).getByText("0.75x")).toBeVisible();
+      expect(windowListener).not.toHaveBeenCalled();
+      expect(documentListener).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", windowListener, listenerOptions);
+      document.removeEventListener("keydown", documentListener, listenerOptions);
+    }
   });
 
   it("toggles playback with keyboard shortcuts while a button is focused", async () => {

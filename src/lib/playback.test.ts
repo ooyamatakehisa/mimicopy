@@ -48,6 +48,12 @@ describe("playback helpers", () => {
       direction: "faster",
       type: "speed"
     });
+    expect(
+      getShortcutCommand({ code: "Comma", key: "Unidentified", shiftKey: true })
+    ).toEqual({
+      direction: "slower",
+      type: "speed"
+    });
     expect(getShortcutCommand({ key: "Delete" })).toEqual({
       type: "returnToMarker"
     });

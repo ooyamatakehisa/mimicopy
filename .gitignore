@@ -5,6 +5,8 @@ coverage/
 .env
 .env.*
 storage/media/
+storage/*.sqlite
+storage/*.sqlite-*
 *-player-script.js
 *.local
 npm-debug.log*

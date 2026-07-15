@@ -2,15 +2,21 @@ import express, { type Request, type Response } from "express";
 import { Innertube, type Types } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import {
+  createLibraryStore,
+  type LibraryMarker,
+  type LibraryTrack,
+  type LibraryTrackSummary
+} from "./libraryStore.js";
 
 const PORT = Number(process.env.PORT ?? 5174);
 const MAX_YOUTUBE_DURATION_SECONDS = 60 * 60 * 2;
-const mediaDir = path.resolve(process.cwd(), "storage", "media");
+const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 let youtubeClientPromise: Promise<Innertube> | null = null;
 
 type YoutubeRequestBody = {
@@ -20,12 +26,49 @@ type YoutubeRequestBody = {
 type YoutubeResponseBody =
   | {
       mediaUrl: string;
+      track: LibraryTrack;
       title: string;
       duration: number;
     }
   | {
       error: string;
     };
+
+type TrackListResponseBody =
+  | {
+      tracks: LibraryTrackSummary[];
+    }
+  | {
+      error: string;
+    };
+
+type TrackResponseBody =
+  | {
+      track: LibraryTrack;
+    }
+  | {
+      error: string;
+    };
+
+type MarkersRequestBody = {
+  markers?: unknown;
+};
+
+type TrackPatchRequestBody = {
+  duration?: unknown;
+};
+
+type TrackDeleteResponseBody =
+  | {
+      ok: true;
+    }
+  | {
+      error: string;
+    };
+
+type CreateAppOptions = {
+  storageDir?: string;
+};
 
 export type YoutubeDownloadPlan = {
   client: Types.InnerTubeClient;
@@ -122,6 +165,117 @@ export function getYoutubeVideoId(value: unknown) {
 function getYoutubeClient() {
   youtubeClientPromise ??= Innertube.create();
   return youtubeClientPromise;
+}
+
+function getStoragePaths(storageDir: string) {
+  return {
+    databasePath: path.join(storageDir, "library.sqlite"),
+    mediaDir: path.join(storageDir, "media")
+  };
+}
+
+function getTrackId(request: Request<{ trackId: string }>) {
+  const trackId = request.params.trackId.trim();
+
+  if (trackId.length === 0) {
+    throw new InputError("Track id is required.");
+  }
+
+  return trackId;
+}
+
+function decodeHeaderValue(value: string | string[] | undefined) {
+  const firstValue = Array.isArray(value) ? value[0] : value;
+
+  if (!firstValue) {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(firstValue);
+  } catch {
+    return firstValue;
+  }
+}
+
+function getUploadTitle(request: Request) {
+  return decodeHeaderValue(request.headers["x-file-name"]) || "Uploaded MP3";
+}
+
+function isLikelyMp3Upload(request: Request) {
+  const title = getUploadTitle(request).toLowerCase();
+  const contentType = request.headers["content-type"]?.toLowerCase() ?? "";
+
+  return (
+    title.endsWith(".mp3") ||
+    contentType.includes("audio/mpeg") ||
+    contentType.includes("audio/mp3") ||
+    contentType.includes("application/octet-stream")
+  );
+}
+
+function parseDuration(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new InputError("Duration must be a non-negative number.");
+  }
+
+  return value;
+}
+
+function parseMarkers(value: unknown) {
+  if (!Array.isArray(value)) {
+    throw new InputError("Markers must be an array.");
+  }
+
+  if (value.length > 500) {
+    throw new InputError("A track can store up to 500 markers.");
+  }
+
+  return value.map((marker, index): LibraryMarker => {
+    if (!marker || typeof marker !== "object") {
+      throw new InputError(`Marker ${index + 1} is invalid.`);
+    }
+
+    const candidate = marker as Record<string, unknown>;
+
+    if (typeof candidate.id !== "string" || candidate.id.trim().length === 0) {
+      throw new InputError(`Marker ${index + 1} needs an id.`);
+    }
+
+    if (
+      typeof candidate.label !== "string" ||
+      candidate.label.trim().length === 0
+    ) {
+      throw new InputError(`Marker ${index + 1} needs a label.`);
+    }
+
+    if (
+      typeof candidate.time !== "number" ||
+      !Number.isFinite(candidate.time) ||
+      candidate.time < 0
+    ) {
+      throw new InputError(`Marker ${index + 1} needs a valid time.`);
+    }
+
+    return {
+      id: candidate.id.trim(),
+      label: candidate.label.trim().slice(0, 120),
+      time: candidate.time
+    };
+  });
+}
+
+function sendError(
+  response: Response<{ error: string }>,
+  error: unknown,
+  fallbackMessage: string
+) {
+  const message = toErrorMessage(error);
+  const status = error instanceof InputError ? 400 : 500;
+
+  response.status(status).json({
+    error: status === 400 ? message : `${fallbackMessage} ${message}`
+  });
 }
 
 function createFfmpegProcess(outputPath: string) {
@@ -240,15 +394,163 @@ async function convertYoutubeToMp3(videoId: string, outputPath: string) {
   );
 }
 
-export function createApp() {
+export function createApp(options: CreateAppOptions = {}) {
   const app = express();
+  const storageDir =
+    options.storageDir ??
+    process.env.MIMICOPY_STORAGE_DIR ??
+    path.resolve(process.cwd(), "storage");
+  const paths = getStoragePaths(storageDir);
+  const store = createLibraryStore(paths);
 
   app.use(express.json({ limit: "1mb" }));
-  app.use("/media", express.static(mediaDir, { maxAge: "1h" }));
+  app.use("/media", express.static(paths.mediaDir, { maxAge: "1h" }));
 
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true });
   });
+
+  app.get(
+    "/api/tracks",
+    (_request: Request, response: Response<TrackListResponseBody>) => {
+      response.json({ tracks: store.listTracks() });
+    }
+  );
+
+  app.get(
+    "/api/tracks/:trackId",
+    (
+      request: Request<{ trackId: string }>,
+      response: Response<TrackResponseBody>
+    ) => {
+      try {
+        const track = store.getTrack(getTrackId(request));
+
+        if (!track) {
+          response.status(404).json({ error: "Track was not found." });
+          return;
+        }
+
+        response.json({ track });
+      } catch (error) {
+        sendError(response, error, "Could not load the track.");
+      }
+    }
+  );
+
+  app.post(
+    "/api/tracks",
+    express.raw({
+      limit: MAX_UPLOAD_BYTES,
+      type: ["audio/mpeg", "audio/mp3", "application/octet-stream"]
+    }),
+    async (request: Request, response: Response<TrackResponseBody>) => {
+      let outputPath: string | undefined;
+
+      try {
+        if (!isLikelyMp3Upload(request)) {
+          throw new InputError("Only MP3 uploads are supported.");
+        }
+
+        if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+          throw new InputError("MP3 file is required.");
+        }
+
+        const fileName = `${randomUUID()}.mp3`;
+        outputPath = path.join(paths.mediaDir, fileName);
+
+        await writeFile(outputPath, request.body);
+
+        const track = store.createTrack({
+          duration: 0,
+          mediaFilename: fileName,
+          sourceType: "upload",
+          title: getUploadTitle(request)
+        });
+
+        response.status(201).json({ track });
+      } catch (error) {
+        if (outputPath) {
+          await rm(outputPath, { force: true }).catch(() => undefined);
+        }
+
+        sendError(response, error, "Could not save the MP3.");
+      }
+    }
+  );
+
+  app.patch(
+    "/api/tracks/:trackId",
+    (
+      request: Request<{ trackId: string }, TrackResponseBody, TrackPatchRequestBody>,
+      response: Response<TrackResponseBody>
+    ) => {
+      try {
+        const track = store.updateTrackDuration(
+          getTrackId(request),
+          parseDuration(request.body.duration)
+        );
+
+        if (!track) {
+          response.status(404).json({ error: "Track was not found." });
+          return;
+        }
+
+        response.json({ track });
+      } catch (error) {
+        sendError(response, error, "Could not update the track.");
+      }
+    }
+  );
+
+  app.put(
+    "/api/tracks/:trackId/markers",
+    (
+      request: Request<{ trackId: string }, TrackResponseBody, MarkersRequestBody>,
+      response: Response<TrackResponseBody>
+    ) => {
+      try {
+        const track = store.replaceMarkers(
+          getTrackId(request),
+          parseMarkers(request.body.markers)
+        );
+
+        if (!track) {
+          response.status(404).json({ error: "Track was not found." });
+          return;
+        }
+
+        response.json({ track });
+      } catch (error) {
+        sendError(response, error, "Could not save the markers.");
+      }
+    }
+  );
+
+  app.delete(
+    "/api/tracks/:trackId",
+    async (
+      request: Request<{ trackId: string }>,
+      response: Response<TrackDeleteResponseBody>
+    ) => {
+      try {
+        const mediaFilename = store.deleteTrack(getTrackId(request));
+
+        if (!mediaFilename) {
+          response.status(404).json({ error: "Track was not found." });
+          return;
+        }
+
+        await rm(path.join(paths.mediaDir, mediaFilename), {
+          force: true
+        }).catch(() => undefined);
+
+        response.json({ ok: true });
+      } catch (error) {
+        sendError(response, error, "Could not delete the track.");
+      }
+    }
+  );
 
   app.post(
     "/api/youtube",
@@ -260,15 +562,21 @@ export function createApp() {
 
       try {
         const videoId = getYoutubeVideoId(request.body.url);
-        await mkdir(mediaDir, { recursive: true });
 
         const fileName = `${randomUUID()}.mp3`;
-        outputPath = path.join(mediaDir, fileName);
+        outputPath = path.join(paths.mediaDir, fileName);
         const converted = await convertYoutubeToMp3(videoId, outputPath);
+        const track = store.createTrack({
+          duration: converted.duration,
+          mediaFilename: fileName,
+          sourceType: "youtube",
+          title: converted.title
+        });
 
         response.json({
           duration: converted.duration,
           mediaUrl: `/media/${fileName}`,
+          track,
           title: converted.title
         });
       } catch (error) {
@@ -276,15 +584,7 @@ export function createApp() {
           await rm(outputPath, { force: true }).catch(() => undefined);
         }
 
-        const message = toErrorMessage(error);
-        const status = error instanceof InputError ? 400 : 500;
-
-        response.status(status).json({
-          error:
-            status === 400
-              ? message
-              : `Could not convert the YouTube audio. ${message}`
-        });
+        sendError(response, error, "Could not convert the YouTube audio.");
       }
     }
   );

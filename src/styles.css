@@ -221,12 +221,13 @@ button {
 .studioGrid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  grid-template-columns: minmax(240px, 310px) minmax(0, 1fr) minmax(260px, 330px);
   align-items: start;
   gap: 16px;
 }
 
 .workspace,
+.libraryPanel,
 .markerPanel {
   min-height: 0;
   border: 1px solid var(--line);
@@ -359,6 +360,12 @@ button {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.libraryPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 190px);
+}
+
 .panelHeader {
   min-height: 74px;
   display: flex;
@@ -396,10 +403,78 @@ button {
 }
 
 .emptyMarkers {
+  display: grid;
+  place-items: center;
+  gap: 8px;
   padding: 18px 8px;
   color: var(--quiet);
   text-align: center;
   border: 1px dashed var(--line);
+}
+
+.libraryList {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.libraryItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 8px;
+  border: 1px solid transparent;
+  background: rgba(247, 247, 242, 0.04);
+}
+
+.libraryItem.active {
+  border-color: rgba(42, 157, 143, 0.58);
+  background: rgba(42, 157, 143, 0.12);
+}
+
+.libraryTrackButton {
+  min-width: 0;
+  border: 0;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  color: var(--paper);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.libraryTrackButton:hover,
+.libraryTrackButton:focus-visible {
+  outline: 0;
+  background: rgba(247, 247, 242, 0.07);
+}
+
+.libraryTrackText {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.libraryTrackText strong,
+.libraryTrackText span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryTrackText strong {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.libraryTrackText span {
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .markerItem {
