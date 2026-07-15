@@ -3,6 +3,7 @@ import { Innertube, type Types } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rename, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -17,6 +18,8 @@ import {
 const PORT = Number(process.env.PORT ?? 5174);
 const MAX_YOUTUBE_DURATION_SECONDS = 60 * 60 * 2;
 const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+const require = createRequire(import.meta.url);
+const bundledFfmpegPath = require("ffmpeg-static") as unknown;
 let youtubeClientPromise: Promise<Innertube> | null = null;
 
 type YoutubeRequestBody = {
@@ -278,9 +281,21 @@ function sendError(
   });
 }
 
+function getFfmpegPath() {
+  if (process.env.FFMPEG_PATH) {
+    return process.env.FFMPEG_PATH;
+  }
+
+  if (typeof bundledFfmpegPath === "string" && bundledFfmpegPath.length > 0) {
+    return bundledFfmpegPath;
+  }
+
+  throw new Error("ffmpeg binary is not available.");
+}
+
 function createFfmpegProcess(outputPath: string) {
   return spawn(
-    process.env.FFMPEG_PATH ?? "ffmpeg",
+    getFfmpegPath(),
     [
       "-hide_banner",
       "-loglevel",

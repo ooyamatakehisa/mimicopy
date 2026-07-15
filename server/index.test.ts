@@ -16,6 +16,12 @@ describe("getYoutubeVideoId", () => {
         "https://www.youtube.com/watch?v=GVFR9zmQjec&list=RDGVFR9zmQjec&start_radio=1"
       )
     ).toBe("GVFR9zmQjec");
+
+    expect(
+      getYoutubeVideoId(
+        "https://www.youtube.com/watch?v=OS45uTF_8P0&list=RDOS45uTF_8P0&start_radio=1"
+      )
+    ).toBe("OS45uTF_8P0");
   });
 
   it("extracts video ids from common YouTube URL forms", () => {

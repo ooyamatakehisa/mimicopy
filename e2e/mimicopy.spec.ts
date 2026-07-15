@@ -1,4 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+const realYoutubeUrl =
+  process.env.MIMICOPY_E2E_YOUTUBE_URL ??
+  "https://www.youtube.com/watch?v=OS45uTF_8P0&list=RDOS45uTF_8P0&start_radio=1";
 
 function createToneWavBuffer() {
   const sampleRate = 44_100;
@@ -32,6 +36,20 @@ function createToneWavBuffer() {
   return buffer;
 }
 
+async function expectWaveformCanvas(page: Page) {
+  await expect
+    .poll(() =>
+      page
+        .locator("canvas")
+        .evaluate((element) => {
+          const canvas = element as HTMLCanvasElement;
+
+          return canvas.width > 0 && canvas.height > 0;
+        })
+    )
+    .toBe(true);
+}
+
 test("loads audio and supports the main playback and marker workflow", async ({
   page
 }) => {
@@ -56,17 +74,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
 
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
-  await expect
-    .poll(() =>
-      page
-        .locator("canvas")
-        .evaluate((element) => {
-          const canvas = element as HTMLCanvasElement;
-
-          return canvas.width > 0 && canvas.height > 0;
-        })
-    )
-    .toBe(true);
+  await expectWaveformCanvas(page);
 
   await page.getByTitle("再生").click();
   await expect(page.getByTitle("停止")).toBeVisible();
@@ -138,6 +146,45 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");
   await expect(library).toContainText("e2e-tone.mp3");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await library.getByTitle("保存済みMP3を削除").click();
+  await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+});
+
+test("converts a real playlist-backed YouTube URL", async ({ page }) => {
+  test.setTimeout(120_000);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+
+  await page.getByLabel("YouTube URL").fill(realYoutubeUrl);
+  await page.getByTitle("YouTubeを変換").click();
+
+  await expect(page).toHaveURL(/\/tracks\/[^/]+$/, { timeout: 90_000 });
+  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+    "を読み込みました。",
+    { timeout: 30_000 }
+  );
+  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expectWaveformCanvas(page);
+
+  const mediaState = await page.locator("audio").evaluate((audioElement) => {
+    const audio = audioElement as HTMLAudioElement;
+
+    return {
+      duration: audio.duration,
+      src: audio.currentSrc
+    };
+  });
+
+  expect(mediaState.src).toContain("/media/");
+  expect(mediaState.duration).toBeGreaterThan(0);
+
+  await page.getByTitle("ライブラリへ戻る").click();
+  await expect(page).toHaveURL("/");
+  const library = page.getByLabel("Saved MP3 library");
+  await expect(library).toContainText("YouTube");
 
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();
