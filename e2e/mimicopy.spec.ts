@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const realYoutubeUrl =
   process.env.MIMICOPY_E2E_YOUTUBE_URL ??
   "https://www.youtube.com/watch?v=OS45uTF_8P0&list=RDOS45uTF_8P0&start_radio=1";
+const runRealYoutubeE2e = process.env.MIMICOPY_E2E_REAL_YOUTUBE === "1";
 
 function createToneWavBuffer() {
   const sampleRate = 44_100;
@@ -88,6 +89,77 @@ async function expectInitialPlaybackPosition(page: Page) {
   expect(mediaState.duration).toBeGreaterThan(0);
   expect(playheadLeft.style).toContain("--playhead-left: 0%");
   expect(playheadLeft.computedLeft).toBe(0);
+}
+
+async function mockYoutubeConversion(page: Page) {
+  let hasConvertedTrack = false;
+  const now = new Date().toISOString();
+  const track = {
+    createdAt: now,
+    duration: 1,
+    id: "e2e-youtube-track",
+    markerCount: 0,
+    markers: [],
+    mediaUrl: "/media/e2e-youtube.mp3",
+    sourceType: "youtube",
+    title: "Mock YouTube Track",
+    updatedAt: now
+  };
+  const trackSummary = {
+    createdAt: track.createdAt,
+    duration: track.duration,
+    id: track.id,
+    markerCount: track.markerCount,
+    mediaUrl: track.mediaUrl,
+    sourceType: track.sourceType,
+    title: track.title,
+    updatedAt: track.updatedAt
+  };
+
+  await page.route("**/api/youtube", async (route) => {
+    hasConvertedTrack = true;
+    await route.fulfill({
+      body: JSON.stringify({ track }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+  await page.route("**/api/tracks/e2e-youtube-track", async (route) => {
+    if (route.request().method() === "DELETE") {
+      hasConvertedTrack = false;
+      await route.fulfill({
+        body: JSON.stringify({ ok: true }),
+        contentType: "application/json",
+        status: 200
+      });
+      return;
+    }
+
+    await route.fulfill({
+      body: JSON.stringify({ track }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+  await page.route("**/api/tracks", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      body: JSON.stringify({ tracks: hasConvertedTrack ? [trackSummary] : [] }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+  await page.route("**/media/e2e-youtube.mp3", async (route) => {
+    await route.fulfill({
+      body: createToneWavBuffer(),
+      contentType: "audio/mpeg",
+      status: 200
+    });
+  });
 }
 
 test("loads audio and supports the main playback and marker workflow", async ({
@@ -193,7 +265,50 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
 });
 
+test("converts a YouTube URL through the UI", async ({ page }) => {
+  await mockYoutubeConversion(page);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+
+  await page.getByLabel("YouTube URL").fill(realYoutubeUrl);
+  await page.getByTitle("YouTubeを変換").click();
+
+  await expect(page).toHaveURL("/tracks/e2e-youtube-track");
+  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+    "Mock YouTube Track を読み込みました。"
+  );
+  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expectWaveformCanvas(page);
+  await expectInitialPlaybackPosition(page);
+
+  const mediaState = await page.locator("audio").evaluate((audioElement) => {
+    const audio = audioElement as HTMLAudioElement;
+
+    return {
+      duration: audio.duration,
+      src: audio.currentSrc
+    };
+  });
+
+  expect(mediaState.src).toContain("/media/e2e-youtube.mp3");
+  expect(mediaState.duration).toBeGreaterThan(0);
+
+  await page.getByTitle("ライブラリへ戻る").click();
+  await expect(page).toHaveURL("/");
+  const library = page.getByLabel("Saved MP3 library");
+  await expect(library).toContainText("YouTube");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await library.getByTitle("保存済みMP3を削除").click();
+  await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+});
+
 test("converts a real playlist-backed YouTube URL", async ({ page }) => {
+  test.skip(
+    !runRealYoutubeE2e,
+    "Real YouTube conversion is opt-in because GitHub Actions network access to YouTube is slow or flaky."
+  );
   test.setTimeout(120_000);
 
   await page.goto("/");
