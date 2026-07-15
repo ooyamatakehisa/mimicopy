@@ -15,7 +15,7 @@
 - Use `useMemo`, `useCallback`, and refs for media-facing code where they prevent stale closures or unnecessary redraw work.
 - Keep side effects inside `useEffect` with complete dependency arrays.
 - Prefer named exports for reusable modules.
-- Use CSS modules or plain scoped CSS through the app stylesheet; avoid inline style objects except for dynamic CSS custom properties.
+- Prefer shared Tailwind UI primitives and design tokens over page-local styling; avoid inline style objects except when values are computed at runtime.
 
 ## Server Rules
 

@@ -65,6 +65,11 @@ import {
   type WaveformPeak,
   type WaveformZoom
 } from "./lib/waveform";
+import { Button, IconButton } from "./components/ui/button";
+import { SectionHeader, Surface } from "./components/ui/surface";
+import { StatusBadge } from "./components/ui/status-badge";
+import { TextInput } from "./components/ui/text-input";
+import { cn } from "./lib/cn";
 
 type AudioSource = {
   kind: LibrarySourceType;
@@ -1032,15 +1037,15 @@ export function App() {
     context.clearRect(0, 0, cssWidth, cssHeight);
 
     const gradient = context.createLinearGradient(0, 0, cssWidth, cssHeight);
-    gradient.addColorStop(0, "#2a9d8f");
-    gradient.addColorStop(0.55, "#f4a261");
-    gradient.addColorStop(1, "#e76f51");
+    gradient.addColorStop(0, "#00a99d");
+    gradient.addColorStop(0.5, "#3a86ff");
+    gradient.addColorStop(1, "#ff6b4a");
 
-    context.fillStyle = "rgba(255, 255, 255, 0.06)";
+    context.fillStyle = "rgba(255, 255, 255, 0.035)";
     context.fillRect(0, 0, cssWidth, cssHeight);
 
     if (peaks.length === 0) {
-      context.fillStyle = "rgba(247, 247, 242, 0.18)";
+      context.fillStyle = "rgba(244, 247, 245, 0.18)";
       context.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
       return;
     }
@@ -1080,7 +1085,14 @@ export function App() {
   }, [duration, peaks, route.name, waveformRange, waveformSize]);
 
   return (
-    <main className={`appShell ${route.name === "library" ? "libraryRoute" : "trackRoute"}`}>
+    <main
+      className={cn(
+        "grid min-h-screen content-start gap-4 p-5 max-sm:gap-3 max-sm:p-3",
+        route.name === "library"
+          ? "grid-rows-[auto_minmax(0,1fr)]"
+          : "grid-rows-[auto_minmax(0,1fr)_auto]"
+      )}
+    >
       <audio
         ref={audioRef}
         preload="metadata"
@@ -1105,122 +1117,128 @@ export function App() {
         }}
       />
 
-      <header className="topBar">
+      <Surface
+        as="header"
+        className="flex min-h-[82px] items-center justify-between gap-4 rounded-[2rem] p-4 max-lg:flex-col max-lg:items-stretch"
+      >
         <button
-          className="brandBlock brandButton"
+          className="flex min-w-60 items-center gap-3 rounded-full bg-white/[0.03] p-1.5 pr-5 text-left transition hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal max-lg:w-full"
           type="button"
           title="ライブラリへ"
           onClick={navigateToLibrary}
         >
-          <span className="brandMark">M</span>
-          <div>
-            <h1>Mimicopy</h1>
-            <p>
+          <span className="grid size-11 place-items-center rounded-full border border-teal/30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.38),transparent_30%),linear-gradient(135deg,rgba(67,224,202,0.95),rgba(122,167,255,0.72))] text-base font-black text-[#061210] shadow-[0_14px_36px_rgba(67,224,202,0.2)]">
+            M
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <h1 className="m-0 text-xl font-semibold leading-none text-ink">
+              Mimicopy
+            </h1>
+            <span className="truncate text-sm text-muted max-sm:whitespace-normal">
               {route.name === "track" && currentTrack
                 ? `${currentTrack.title} ・ ${
                     isSavingMarkers ? "マーカー保存中" : "保存済み"
                   }`
                 : "保存済みMP3ライブラリ"}
-            </p>
-          </div>
+            </span>
+          </span>
         </button>
 
         {route.name === "library" ? (
-          <div className="sourceControls">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-3 max-lg:w-full max-lg:flex-col max-lg:items-stretch">
             <input
               ref={fileInputRef}
-              className="srOnly"
+              className="sr-only"
               type="file"
               accept="audio/mpeg,.mp3"
               onChange={handleFileChange}
             />
-            <button
-              className="controlButton"
-              type="button"
+            <Button
               title="MP3を選択"
               disabled={isUploading}
               onClick={() => fileInputRef.current?.click()}
             >
               {isUploading ? (
-                <LoaderCircle className="spin" size={18} />
+                <LoaderCircle className="animate-spin" size={18} />
               ) : (
                 <Upload size={18} />
               )}
               <span>{isUploading ? "保存中" : "MP3"}</span>
-            </button>
+            </Button>
 
-            <form className="youtubeForm" onSubmit={handleYoutubeSubmit}>
-              <label className="srOnly" htmlFor="youtube-url">
+            <form
+              className="grid h-11 min-w-[300px] max-w-[680px] flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] py-0 pl-4 pr-1 transition-[background,border-color,box-shadow] focus-within:border-teal/55 focus-within:bg-white/[0.09] focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-lg:w-full max-lg:min-w-0"
+              onSubmit={handleYoutubeSubmit}
+            >
+              <label className="sr-only" htmlFor="youtube-url">
                 YouTube URL
               </label>
-              <Link size={18} aria-hidden="true" />
+              <Link className="text-muted" size={18} aria-hidden="true" />
               <input
                 id="youtube-url"
+                className="min-w-0 bg-transparent text-sm text-ink outline-none placeholder:text-quiet"
                 type="url"
                 inputMode="url"
                 placeholder="https://www.youtube.com/watch?v=..."
                 value={youtubeUrl}
                 onChange={(event) => setYoutubeUrl(event.target.value)}
               />
-              <button
-                className="iconButton"
+              <IconButton
                 type="submit"
                 title="YouTubeを変換"
                 disabled={isConverting}
               >
                 {isConverting ? (
-                  <LoaderCircle className="spin" size={18} />
+                  <LoaderCircle className="animate-spin" size={18} />
                 ) : (
                   <Plus size={18} />
                 )}
-              </button>
+              </IconButton>
             </form>
           </div>
         ) : (
-          <button
-            className="controlButton"
-            type="button"
-            title="ライブラリへ戻る"
-            onClick={navigateToLibrary}
-          >
+          <Button title="ライブラリへ戻る" onClick={navigateToLibrary}>
             <ArrowLeft size={18} />
             <span>Library</span>
-          </button>
+          </Button>
         )}
-      </header>
+      </Surface>
 
       {route.name === "library" ? (
-        <section className="libraryPage" aria-label="Saved MP3 library">
-          <div className="libraryPageHeader">
-            <div>
-              <h2>Library</h2>
-              <p>{libraryTracks.length} saved MP3s</p>
-            </div>
-            <button
-              className="iconButton"
-              type="button"
-              title="一覧を更新"
-              disabled={isLibraryLoading}
-              onClick={loadLibrary}
-            >
-              {isLibraryLoading ? (
-                <LoaderCircle className="spin" size={18} />
-              ) : (
-                <RefreshCcw size={18} />
-              )}
-            </button>
+        <Surface
+          className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem]"
+          aria-label="Saved MP3 library"
+        >
+          <SectionHeader
+            title="Library"
+            description={`${libraryTracks.length} saved MP3s`}
+            action={
+              <IconButton
+                title="一覧を更新"
+                disabled={isLibraryLoading}
+                onClick={loadLibrary}
+              >
+                {isLibraryLoading ? (
+                  <LoaderCircle className="animate-spin" size={18} />
+                ) : (
+                  <RefreshCcw size={18} />
+                )}
+              </IconButton>
+            }
+          />
+
+          <div className="mx-4 mb-1 mt-4 grid min-h-14 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-full border border-white/8 bg-white/[0.045] px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3">
+            <StatusBadge state={loadState}>{loadState}</StatusBadge>
+            <span className="min-w-0 truncate">{message}</span>
           </div>
 
-          <div className="statusStrip">
-            <span className={`statusPill ${loadState}`}>{loadState}</span>
-            <span>{message}</span>
-          </div>
-
-          <div className="trackList">
+          <div className="min-h-0 overflow-auto p-4">
             {libraryTracks.length === 0 ? (
-              <div className="emptyLibrary">
-                <ListMusic size={22} aria-hidden="true" />
-                <span>
+              <div className="grid min-h-[360px] place-items-center content-center gap-4 rounded-[2rem] border border-dashed border-white/14 bg-[radial-gradient(circle_at_50%_0%,rgba(67,224,202,0.12),transparent_36%),rgba(255,255,255,0.035)] text-center text-quiet">
+                <span className="grid size-16 place-items-center rounded-full border border-white/10 bg-white/[0.06] text-teal">
+                  <ListMusic size={24} aria-hidden="true" />
+                </span>
+                <span className="text-sm">
                   {isLibraryLoading
                     ? "読み込み中"
                     : "保存済みMP3はまだありません"}
@@ -1230,64 +1248,78 @@ export function App() {
               libraryTracks.map((track) => (
                 <div
                   key={track.id}
-                  className={`trackListItem ${
-                    track.id === currentTrackId ? "active" : ""
-                  }`}
+                  className={cn(
+                    "grid grid-cols-[minmax(0,1fr)_auto] items-stretch overflow-hidden rounded-[1.75rem] border border-white/8 bg-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight [&+&]:mt-3",
+                    track.id === currentTrackId &&
+                      "border-teal/45 bg-teal/12 shadow-[0_18px_44px_rgba(67,224,202,0.1)]"
+                  )}
                 >
                   <button
-                    className="trackOpenButton"
+                    className="grid min-w-0 grid-cols-[44px_minmax(220px,1fr)_96px_90px_112px_148px] items-center gap-3 bg-transparent px-4 py-4 text-left text-sm text-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue max-[1040px]:grid-cols-[44px_minmax(180px,1fr)_90px_86px_108px] max-[1040px]:[&>span:nth-of-type(6)]:hidden max-lg:grid-cols-[44px_minmax(0,1fr)] max-lg:[&>span:nth-of-type(n+3)]:hidden"
                     type="button"
                     title={`${track.title} を開く`}
                     onClick={() => navigateToTrack(track.id)}
                   >
-                    <Music2 size={18} aria-hidden="true" />
-                    <span className="trackTitleBlock">
-                      <strong>{track.title}</strong>
+                    <span className="grid size-11 place-items-center rounded-2xl bg-teal/12 text-teal">
+                      <Music2 size={18} aria-hidden="true" />
                     </span>
-                    <span>{getSourceTypeLabel(track.sourceType)}</span>
-                    <span>{formatTime(track.duration)}</span>
-                    <span>{track.markerCount} markers</span>
-                    <span>Updated {formatLibraryDate(track.updatedAt)}</span>
+                    <span className="min-w-0">
+                      <strong className="block truncate text-base font-semibold leading-tight text-ink">
+                        {track.title}
+                      </strong>
+                    </span>
+                    <span className="truncate">{getSourceTypeLabel(track.sourceType)}</span>
+                    <span className="truncate">{formatTime(track.duration)}</span>
+                    <span className="truncate">{track.markerCount} markers</span>
+                    <span className="truncate">
+                      Updated {formatLibraryDate(track.updatedAt)}
+                    </span>
                   </button>
-                  <button
-                    className="iconButton danger"
-                    type="button"
+                  <IconButton
+                    className="m-2 self-center"
+                    variant="danger"
                     title="保存済みMP3を削除"
                     onClick={() => deleteTrackFromLibrary(track.id)}
                   >
                     <Trash2 size={17} />
-                  </button>
+                  </IconButton>
                 </div>
               ))
             )}
           </div>
-        </section>
+        </Surface>
       ) : (
         <>
-          <section className="editorPage" aria-label="Audio editor">
-            <div className="editorHeader">
-              <div>
-                <h2>{currentTrack?.title ?? "曲を読み込み中"}</h2>
-                <p>{isSavingMarkers ? "マーカー保存中" : message}</p>
-              </div>
-              <span className="timeReadout">
-                {formatTime(currentTime)} / {formatTime(duration)}
-              </span>
-            </div>
+          <Surface
+            className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem]"
+            aria-label="Audio editor"
+          >
+            <SectionHeader
+              title={currentTrack?.title ?? "曲を読み込み中"}
+              description={isSavingMarkers ? "マーカー保存中" : message}
+              action={
+                <span className="whitespace-nowrap text-sm font-bold tabular-nums text-ink">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </span>
+              }
+            />
 
-            <div className="editorGrid">
-              <section className="workspace" aria-label="Waveform">
-                <div className="timelineMeta">
-                  <span className={`statusPill ${loadState}`}>{loadState}</span>
-                  <span>{message}</span>
-                  <span className="timeReadout">
+            <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:grid-cols-1">
+              <section
+                className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04]"
+                aria-label="Waveform"
+              >
+                <div className="mx-3 mt-3 grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-full border border-white/8 bg-black/18 px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3">
+                  <StatusBadge state={loadState}>{loadState}</StatusBadge>
+                  <span className="min-w-0 truncate">{message}</span>
+                  <span className="whitespace-nowrap font-bold tabular-nums text-ink">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
                 </div>
 
                 <div
                   ref={waveformRef}
-                  className="waveformSurface"
+                  className="waveformSurface relative m-3 h-[clamp(320px,48vh,580px)] min-h-0 cursor-crosshair overflow-hidden rounded-[1.75rem] border border-white/8 bg-[radial-gradient(circle_at_15%_10%,rgba(67,224,202,0.16),transparent_24%),radial-gradient(circle_at_85%_90%,rgba(255,138,101,0.12),transparent_25%),linear-gradient(rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(180deg,#111816_0%,#070908_100%)] bg-[length:auto,auto,100%_25%,84px_100%,auto] outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[1.75rem] after:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%,rgba(0,0,0,0.18))] focus-visible:shadow-[inset_0_0_0_2px_rgba(122,167,255,0.72)] max-sm:h-[clamp(240px,42vh,380px)]"
                   role="slider"
                   aria-label="再生位置"
                   aria-valuemin={0}
@@ -1296,7 +1328,7 @@ export function App() {
                   tabIndex={0}
                   onPointerDown={handleWaveformPointerDown}
                 >
-                  <canvas ref={canvasRef} className="waveformCanvas" />
+                  <canvas ref={canvasRef} className="block size-full" />
                   {visibleMarkers.map((marker) => {
                     const markerLeft = `${timeToWaveformPercent(
                       marker.time,
@@ -1310,9 +1342,13 @@ export function App() {
                     return (
                       <button
                         key={marker.id}
-                        className={`markerLine ${
-                          marker.id === selectedMarkerId ? "selected" : ""
-                        } ${marker.id === draggingMarkerId ? "dragging" : ""}`}
+                        className={cn(
+                          "markerLine absolute inset-y-0 left-[var(--marker-left)] z-20 w-3 cursor-ew-resize touch-none border-0 border-l-2 border-coral bg-transparent p-0 before:absolute before:left-[-7px] before:top-4 before:size-3 before:rotate-45 before:rounded-[3px] before:border-2 before:border-[#07100f] before:bg-coral before:shadow-[0_10px_24px_rgba(255,138,101,0.28)] hover:border-blue hover:before:bg-blue focus-visible:border-blue focus-visible:outline-none focus-visible:before:bg-blue",
+                          marker.id === selectedMarkerId &&
+                            "border-coral before:bg-coral",
+                          marker.id === draggingMarkerId &&
+                            "border-ink before:bg-ink"
+                        )}
                         draggable
                         style={style}
                         type="button"
@@ -1396,72 +1432,75 @@ export function App() {
                       />
                     );
                   })}
-                  <div className="playhead" style={playheadStyle} />
+                  <div
+                    className="pointer-events-none absolute inset-y-0 left-[var(--playhead-left)] z-30 w-0.5 bg-teal shadow-[0_0_0_1px_rgba(7,16,15,0.78),0_0_24px_rgba(67,224,202,0.48)]"
+                    style={playheadStyle}
+                  />
                 </div>
               </section>
 
-              <aside className="markerPanel" aria-label="Markers">
-                <div className="panelHeader">
-                  <div>
-                    <h2>Markers</h2>
-                    <p>
-                      {selectedMarker ? selectedMarker.label : "No selection"}
-                    </p>
-                  </div>
-                  <button
-                    className="iconButton"
-                    type="button"
-                    title="選択マーカーへ戻る"
-                    disabled={sortedMarkers.length === 0}
-                    onClick={returnToMarker}
-                  >
-                    <RotateCcw size={18} />
-                  </button>
-                </div>
+              <aside
+                className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04] max-lg:min-h-[330px]"
+                aria-label="Markers"
+              >
+                <SectionHeader
+                  title="Markers"
+                  description={selectedMarker ? selectedMarker.label : "No selection"}
+                  action={
+                    <IconButton
+                      title="選択マーカーへ戻る"
+                      disabled={sortedMarkers.length === 0}
+                      onClick={returnToMarker}
+                    >
+                      <RotateCcw size={18} />
+                    </IconButton>
+                  }
+                />
 
-                <div className="markerComposer">
-                  <MapPin size={18} aria-hidden="true" />
-                  <label className="srOnly" htmlFor="marker-time">
+                <div className="mx-3 grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-[1.5rem] border border-white/8 bg-black/18 p-2.5 focus-within:border-teal/55 focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-sm:grid-cols-1">
+                  <MapPin className="text-muted" size={18} aria-hidden="true" />
+                  <label className="sr-only" htmlFor="marker-time">
                     Marker time
                   </label>
-                  <input
+                  <TextInput
                     id="marker-time"
                     value={markerInput}
                     onChange={(event) => setMarkerInput(event.target.value)}
                     placeholder="1:23"
                   />
-                  <button
-                    className="iconButton"
-                    type="button"
+                  <IconButton
                     title="現在位置を入力"
                     onClick={() => setMarkerInput(formatTime(currentTime))}
                   >
                     <Clock3 size={18} />
-                  </button>
-                  <button
-                    className="iconButton accent"
-                    type="button"
+                  </IconButton>
+                  <IconButton
+                    variant="accent"
                     title="入力時刻にマーカー追加"
                     disabled={!audioSource}
                     onClick={addMarkerFromInput}
                   >
                     <Plus size={18} />
-                  </button>
+                  </IconButton>
                 </div>
 
-                <div className="markerList">
+                <div className="min-h-0 overflow-auto p-3">
                   {sortedMarkers.length === 0 ? (
-                    <div className="emptyMarkers">No markers</div>
+                    <div className="grid min-h-32 place-items-center rounded-[1.5rem] border border-dashed border-white/14 bg-white/[0.035] text-center text-quiet">
+                      No markers
+                    </div>
                   ) : (
                     sortedMarkers.map((marker) => (
                       <div
                         key={marker.id}
-                        className={`markerItem ${
-                          marker.id === selectedMarkerId ? "selected" : ""
-                        }`}
+                        className={cn(
+                          "mb-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-[1.5rem] border border-white/8 bg-white/[0.055] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight max-sm:grid-cols-1",
+                          marker.id === selectedMarkerId &&
+                            "border-coral/45 bg-coral/12"
+                        )}
                       >
-                        <div className="markerEditor">
-                          <input
+                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_80px] items-center gap-2 py-2 pl-2 max-sm:grid-cols-1 max-sm:p-2">
+                          <TextInput
                             aria-label={`${marker.label} label`}
                             className="markerLabelInput"
                             value={marker.label}
@@ -1470,9 +1509,9 @@ export function App() {
                               renameMarker(marker.id, event.target.value)
                             }
                           />
-                          <input
+                          <TextInput
                             aria-label={`${marker.label} time`}
-                            className="markerTimeInput"
+                            className="markerTimeInput text-right tabular-nums"
                             inputMode="numeric"
                             value={
                               markerTimeDrafts[marker.id] ??
@@ -1484,9 +1523,8 @@ export function App() {
                             }
                           />
                         </div>
-                        <button
-                          className="iconButton"
-                          type="button"
+                        <IconButton
+                          className="max-sm:w-full"
                           title="マーカーへ移動"
                           onClick={() => {
                             setSelectedMarkerId(marker.id);
@@ -1494,111 +1532,112 @@ export function App() {
                           }}
                         >
                           <MapPin size={17} />
-                        </button>
-                        <button
-                          className="iconButton danger"
-                          type="button"
+                        </IconButton>
+                        <IconButton
+                          className="mr-2 max-sm:mx-2 max-sm:mb-2 max-sm:w-auto"
+                          variant="danger"
                           title="マーカー削除"
                           onClick={() => deleteMarker(marker.id)}
                         >
                           <Trash2 size={17} />
-                        </button>
+                        </IconButton>
                       </div>
                     ))
                   )}
                 </div>
               </aside>
             </div>
-          </section>
+          </Surface>
 
-          <footer className="transportBar">
-            <div className="transportCluster">
-              <button
-                className="transportButton primary"
-                type="button"
+          <Surface
+            as="footer"
+            className="flex min-h-[76px] items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:flex-col max-lg:items-stretch"
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button
+                size="transport"
+                variant="primary"
                 title={isPlaying ? "停止" : "再生"}
                 disabled={!audioSource}
                 onClick={togglePlayback}
               >
                 {isPlaying ? <Pause size={21} /> : <Play size={21} />}
                 <span>{isPlaying ? "停止" : "再生"}</span>
-              </button>
-              <button
-                className="transportButton"
-                type="button"
+              </Button>
+              <Button
+                size="transport"
                 title="5秒戻る"
                 disabled={!audioSource}
                 onClick={() => seekTo(seekBy(currentTime, -5, duration))}
               >
                 <span>-5s</span>
-              </button>
-              <button
-                className="transportButton"
-                type="button"
+              </Button>
+              <Button
+                size="transport"
                 title="5秒進む"
                 disabled={!audioSource}
                 onClick={() => seekTo(seekBy(currentTime, 5, duration))}
               >
                 <span>+5s</span>
-              </button>
-              <button
-                className="transportButton"
-                type="button"
+              </Button>
+              <Button
+                size="transport"
                 title="10秒戻る"
                 disabled={!audioSource}
                 onClick={() => seekTo(seekBy(currentTime, -10, duration))}
               >
                 <span>-10s</span>
-              </button>
-              <button
-                className="transportButton"
-                type="button"
+              </Button>
+              <Button
+                size="transport"
                 title="10秒進む"
                 disabled={!audioSource}
                 onClick={() => seekTo(seekBy(currentTime, 10, duration))}
               >
                 <span>+10s</span>
-              </button>
-              <button
-                className="transportButton accent"
-                type="button"
+              </Button>
+              <Button
+                size="transport"
+                variant="accent"
                 title="現在位置にマーカー追加"
                 disabled={!audioSource}
                 onClick={() => addMarkerAt(currentTime)}
               >
                 <MapPin size={18} />
                 <span>Marker</span>
-              </button>
+              </Button>
             </div>
 
-            <div className="zoomCluster" aria-label="Waveform zoom">
-              <ZoomOut size={18} aria-hidden="true" />
-              <button
-                className="iconButton"
-                type="button"
+            <div
+              className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
+              aria-label="Waveform zoom"
+            >
+              <ZoomOut className="text-muted" size={18} aria-hidden="true" />
+              <IconButton
                 title="波形を縮小"
                 disabled={waveformZoom === 1}
                 onClick={() => changeWaveformZoom("out")}
               >
                 <ZoomOut size={17} />
-              </button>
-              <strong>{waveformZoom}x</strong>
-              <button
-                className="iconButton"
-                type="button"
+              </IconButton>
+              <strong className="min-w-11 text-center tabular-nums text-ink">
+                {waveformZoom}x
+              </strong>
+              <IconButton
                 title="波形を拡大"
                 disabled={waveformZoom === 16}
                 onClick={() => changeWaveformZoom("in")}
               >
                 <ZoomIn size={17} />
-              </button>
+              </IconButton>
             </div>
 
-            <div className="speedCluster" aria-label="Playback speed">
-              <Gauge size={18} aria-hidden="true" />
-              <button
-                className="iconButton"
-                type="button"
+            <div
+              className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
+              aria-label="Playback speed"
+            >
+              <Gauge className="text-muted" size={18} aria-hidden="true" />
+              <IconButton
                 title="速度を下げる"
                 onClick={() =>
                   setPlaybackRate((currentRate) =>
@@ -1607,11 +1646,11 @@ export function App() {
                 }
               >
                 <span>,</span>
-              </button>
-              <strong>{playbackRate}x</strong>
-              <button
-                className="iconButton"
-                type="button"
+              </IconButton>
+              <strong className="min-w-11 text-center tabular-nums text-ink">
+                {playbackRate}x
+              </strong>
+              <IconButton
                 title="速度を上げる"
                 onClick={() =>
                   setPlaybackRate((currentRate) =>
@@ -1620,9 +1659,9 @@ export function App() {
                 }
               >
                 <span>.</span>
-              </button>
+              </IconButton>
             </div>
-          </footer>
+          </Surface>
         </>
       )}
     </main>
