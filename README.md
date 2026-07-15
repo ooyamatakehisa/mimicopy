@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Node.js 22.13.0
+- Node.js 24.18.0
 - pnpm 11+
 - `ffmpeg` in `PATH` for YouTube-to-mp3 conversion
 
