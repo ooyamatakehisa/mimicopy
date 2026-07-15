@@ -17,6 +17,19 @@ export type TrackDetail = TrackSummary & {
   markers: Marker[];
 };
 
+export function toTrackSummary(track: TrackDetail): TrackSummary {
+  return {
+    createdAt: track.createdAt,
+    duration: track.duration,
+    id: track.id,
+    markerCount: track.markerCount,
+    mediaUrl: track.mediaUrl,
+    sourceType: track.sourceType,
+    title: track.title,
+    updatedAt: track.updatedAt
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

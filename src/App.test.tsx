@@ -218,14 +218,12 @@ describe("App", () => {
       .mockImplementation(() => undefined);
     const { container } = render(<App />);
     const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
-    const audio = container.querySelector<HTMLAudioElement>("audio");
     const file = new File([new Uint8Array([1, 2, 3])], "phrase.mp3", {
       type: "audio/mpeg"
     });
 
     try {
       expect(fileInput).not.toBeNull();
-      expect(audio).not.toBeNull();
       fireEvent.change(fileInput as HTMLInputElement, {
         target: { files: [file] }
       });
@@ -234,8 +232,10 @@ describe("App", () => {
         expectLoadedMessage("phrase.mp3");
       });
 
-      const speedDownButton = screen.getByTitle("速度を下げる");
+      const speedDownButton = await screen.findByTitle("速度を下げる");
+      const audio = container.querySelector<HTMLAudioElement>("audio");
 
+      expect(audio).not.toBeNull();
       speedDownButton.focus();
       fireEvent.keyDown(speedDownButton, { key: " " });
       expect(playSpy).toHaveBeenCalledTimes(1);
@@ -289,7 +289,7 @@ describe("App", () => {
       expectLoadedMessage("phrase.mp3");
     });
 
-    fireEvent.change(screen.getByLabelText("Marker time"), {
+    fireEvent.change(await screen.findByLabelText("Marker time"), {
       target: { value: "0:01" }
     });
     fireEvent.click(screen.getByTitle("入力時刻にマーカー追加"));
@@ -302,13 +302,11 @@ describe("App", () => {
   it("adds a marker at the current playback position and edits it", async () => {
     const { container } = render(<App />);
     const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
-    const audio = container.querySelector<HTMLAudioElement>("audio");
     const file = new File([new Uint8Array([1, 2, 3])], "phrase.mp3", {
       type: "audio/mpeg"
     });
 
     expect(fileInput).not.toBeNull();
-    expect(audio).not.toBeNull();
     fireEvent.change(fileInput as HTMLInputElement, {
       target: { files: [file] }
     });
@@ -317,6 +315,11 @@ describe("App", () => {
       expectLoadedMessage("phrase.mp3");
     });
 
+    await screen.findByTitle("現在位置にマーカー追加");
+
+    const audio = container.querySelector<HTMLAudioElement>("audio");
+
+    expect(audio).not.toBeNull();
     (audio as HTMLAudioElement).currentTime = 4;
     fireEvent.timeUpdate(audio as HTMLAudioElement);
     fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
@@ -383,7 +386,7 @@ describe("App", () => {
         expectLoadedMessage("phrase.mp3");
       });
 
-      fireEvent.change(screen.getByLabelText("Marker time"), {
+      fireEvent.change(await screen.findByLabelText("Marker time"), {
         target: { value: "0:02" }
       });
       fireEvent.click(screen.getByTitle("入力時刻にマーカー追加"));

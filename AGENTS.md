@@ -12,10 +12,17 @@
 
 - Keep `strict` TypeScript enabled and avoid `any`; use `unknown` plus narrowing when needed.
 - Model app state with explicit types and discriminated unions where useful.
+- Before splitting a large React component, first design the responsibility boundaries and state ownership. Do not merely move JSX into children while keeping all state in the old parent.
+- Keep state as local as its meaning allows. Prefer component-local state and focused custom hooks for screen-local workflows; use React context only when prop drilling across meaningful distance is worse than introducing shared state.
+- Avoid catch-all contexts or provider objects that gather unrelated state and commands. Split playback, marker editing, waveform viewport, routing, and library data by cohesive domain boundaries.
+- Derive UI status from existing query, mutation, and domain state when possible instead of storing duplicate `loadState` or message state.
+- Use TanStack Query for REST reads and writes. Do not initiate REST requests from `useEffect`; reserve effects for synchronizing with browser APIs, DOM/media elements, timers, subscriptions, and other external non-REST systems.
+- Do not hand-roll client-side routing, history management, or URL param parsing for app navigation. Use the project's routing library, and add a current, established router such as React Router when the project does not already have one.
 - Use `useMemo`, `useCallback`, and refs for media-facing code where they prevent stale closures or unnecessary redraw work.
 - Keep side effects inside `useEffect` with complete dependency arrays.
 - Prefer named exports for reusable modules.
 - Prefer shared Tailwind UI primitives and design tokens over page-local styling; avoid inline style objects except when values are computed at runtime.
+- Name files that export React components in PascalCase, matching the exported component name or component group. Keep non-component hooks/utilities in lower camel case.
 
 ## Server Rules
 
