@@ -39,10 +39,17 @@ function createTrack(overrides: Partial<TrackDetail> = {}): TrackDetail {
   };
 }
 
+function expectLoadedMessage(title: string) {
+  expect(
+    screen.getAllByText(`${title} を読み込みました。`).length
+  ).toBeGreaterThan(0);
+}
+
 describe("App", () => {
   let tracks: TrackDetail[];
 
   beforeEach(() => {
+    window.history.replaceState(null, "", "/");
     tracks = [];
 
     vi.stubGlobal(
@@ -114,11 +121,11 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the editor shell", () => {
+  it("renders the library page", () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Mimicopy" })).toBeVisible();
-    expect(screen.getByText("0:00 / 0:00")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
     expect(screen.getByPlaceholderText("https://www.youtube.com/watch?v=...")).toBeVisible();
   });
 
@@ -138,15 +145,23 @@ describe("App", () => {
     fireEvent.click(savedTrackButton);
 
     await waitFor(() => {
-      expect(screen.getByText("saved-phrase.mp3 を読み込みました。")).toBeVisible();
+      expectLoadedMessage("saved-phrase.mp3");
     });
 
+    expect(window.location.pathname).toBe("/tracks/track-1");
     expect(screen.getByDisplayValue("Verse")).toBeVisible();
     expect(screen.getByLabelText("Verse time")).toHaveValue("0:03");
   });
 
-  it("changes playback speed with keyboard shortcuts while a button is focused", () => {
+  it("changes playback speed with keyboard shortcuts while a button is focused", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
     render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
     const speedControls = screen.getByLabelText("Playback speed");
     const speedDownButton = screen.getByTitle("速度を下げる");
 
@@ -159,8 +174,15 @@ describe("App", () => {
     expect(within(speedControls).getByText("1x")).toBeVisible();
   });
 
-  it("claims playback speed shortcuts before later page listeners", () => {
+  it("claims playback speed shortcuts before later page listeners", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
     render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
     const speedControls = screen.getByLabelText("Playback speed");
     const speedDownButton = screen.getByTitle("速度を下げる");
     const windowListener = vi.fn();
@@ -209,7 +231,7 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText("phrase.mp3 を読み込みました。")).toBeVisible();
+        expectLoadedMessage("phrase.mp3");
       });
 
       const speedDownButton = screen.getByTitle("速度を下げる");
@@ -231,8 +253,15 @@ describe("App", () => {
     }
   });
 
-  it("changes waveform zoom with the zoom controls", () => {
+  it("changes waveform zoom with the zoom controls", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
     render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
     const zoomControls = screen.getByLabelText("Waveform zoom");
 
     expect(within(zoomControls).getByText("1x")).toBeVisible();
@@ -257,7 +286,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("phrase.mp3 を読み込みました。")).toBeVisible();
+      expectLoadedMessage("phrase.mp3");
     });
 
     fireEvent.change(screen.getByLabelText("Marker time"), {
@@ -285,7 +314,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("phrase.mp3 を読み込みました。")).toBeVisible();
+      expectLoadedMessage("phrase.mp3");
     });
 
     (audio as HTMLAudioElement).currentTime = 4;
@@ -351,7 +380,7 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText("phrase.mp3 を読み込みました。")).toBeVisible();
+        expectLoadedMessage("phrase.mp3");
       });
 
       fireEvent.change(screen.getByLabelText("Marker time"), {

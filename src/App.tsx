@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Clock3,
   Gauge,
   Link,
@@ -83,6 +84,15 @@ type SourceOptions = {
   markers?: Marker[];
 };
 
+type AppRoute =
+  | {
+      name: "library";
+    }
+  | {
+      name: "track";
+      trackId: string;
+    };
+
 const libraryDateFormatter = new Intl.DateTimeFormat("ja-JP", {
   day: "numeric",
   hour: "2-digit",
@@ -160,6 +170,27 @@ function getSourceTypeLabel(sourceType: LibrarySourceType) {
   return "MP3";
 }
 
+function getInitialRoute(): AppRoute {
+  const match = window.location.pathname.match(/^\/tracks\/([^/]+)\/?$/);
+
+  if (match?.[1]) {
+    return {
+      name: "track",
+      trackId: decodeURIComponent(match[1])
+    };
+  }
+
+  return { name: "library" };
+}
+
+function getRoutePath(route: AppRoute) {
+  if (route.name === "track") {
+    return `/tracks/${encodeURIComponent(route.trackId)}`;
+  }
+
+  return "/";
+}
+
 export function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -167,6 +198,7 @@ export function App() {
   const draggingMarkerIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [route, setRoute] = useState<AppRoute>(getInitialRoute);
   const [libraryTracks, setLibraryTracks] = useState<TrackSummary[]>([]);
   const [isLibraryLoading, setIsLibraryLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -220,6 +252,28 @@ export function App() {
   const currentTrack = useMemo(
     () => libraryTracks.find((track) => track.id === currentTrackId) ?? null,
     [currentTrackId, libraryTracks]
+  );
+  const routeTrackId = route.name === "track" ? route.trackId : null;
+
+  const navigateToRoute = useCallback((nextRoute: AppRoute) => {
+    const nextPath = getRoutePath(nextRoute);
+
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState(null, "", nextPath);
+    }
+
+    setRoute(nextRoute);
+  }, []);
+
+  const navigateToLibrary = useCallback(() => {
+    navigateToRoute({ name: "library" });
+  }, [navigateToRoute]);
+
+  const navigateToTrack = useCallback(
+    (trackId: string) => {
+      navigateToRoute({ name: "track", trackId });
+    },
+    [navigateToRoute]
   );
 
   const updateLibraryTrack = useCallback((track: TrackDetail) => {
@@ -334,17 +388,19 @@ export function App() {
       setLoadState("ready");
       setMessage(`${track.title} を読み込みました。`);
       updateLibraryTrack({ ...track, duration: decodedDuration });
+      navigateToTrack(track.id);
 
       if (Math.abs(decodedDuration - track.duration) > 0.25) {
         void saveTrackDuration(track.id, decodedDuration).catch(() => undefined);
       }
     },
-    [saveTrackDuration, setSource, updateLibraryTrack]
+    [navigateToTrack, saveTrackDuration, setSource, updateLibraryTrack]
   );
 
   const loadTrackFromLibrary = useCallback(
     (trackId: string) => {
       setLoadState("loading");
+      setMessage("保存済みMP3を読み込んでいます。");
 
       void fetch(`/api/tracks/${encodeURIComponent(trackId)}`)
         .then((response) =>
@@ -703,6 +759,10 @@ export function App() {
           if (currentTrackId === trackId) {
             resetWorkspace();
           }
+
+          if (routeTrackId === trackId) {
+            navigateToLibrary();
+          }
         })
         .catch((error: unknown) => {
           setMessage(
@@ -712,7 +772,7 @@ export function App() {
           );
         });
     },
-    [currentTrackId, libraryTracks, resetWorkspace]
+    [currentTrackId, libraryTracks, navigateToLibrary, resetWorkspace, routeTrackId]
   );
 
   const handleWaveformPointerDown = useCallback(
@@ -767,6 +827,30 @@ export function App() {
   useEffect(() => {
     loadLibrary();
   }, [loadLibrary]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setRoute(getInitialRoute());
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (route.name !== "track") {
+      return;
+    }
+
+    if (currentTrackId === route.trackId && audioSource) {
+      return;
+    }
+
+    loadTrackFromLibrary(route.trackId);
+  }, [audioSource, currentTrackId, loadTrackFromLibrary, route]);
 
   useEffect(() => {
     if (!currentTrackId || loadState !== "ready") {
@@ -881,6 +965,10 @@ export function App() {
   }, [isPlaying]);
 
   useEffect(() => {
+    if (route.name !== "track") {
+      return undefined;
+    }
+
     const shortcutListenerOptions = { capture: true } as const;
 
     window.addEventListener("keydown", handleShortcut, shortcutListenerOptions);
@@ -892,7 +980,7 @@ export function App() {
         shortcutListenerOptions
       );
     };
-  }, [handleShortcut]);
+  }, [handleShortcut, route.name]);
 
   useEffect(() => {
     setWaveformStart((currentStart) =>
@@ -917,7 +1005,7 @@ export function App() {
     return () => {
       observer.disconnect();
     };
-  }, []);
+  }, [route.name]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -989,10 +1077,10 @@ export function App() {
 
       context.fillRect(x, y, Math.max(1, barWidth * 0.82), barHeight);
     }
-  }, [duration, peaks, waveformRange, waveformSize]);
+  }, [duration, peaks, route.name, waveformRange, waveformSize]);
 
   return (
-    <main className="appShell">
+    <main className={`appShell ${route.name === "library" ? "libraryRoute" : "trackRoute"}`}>
       <audio
         ref={audioRef}
         preload="metadata"
@@ -1018,75 +1106,92 @@ export function App() {
       />
 
       <header className="topBar">
-        <div className="brandBlock">
+        <button
+          className="brandBlock brandButton"
+          type="button"
+          title="ライブラリへ"
+          onClick={navigateToLibrary}
+        >
           <span className="brandMark">M</span>
           <div>
             <h1>Mimicopy</h1>
             <p>
-              {currentTrack
+              {route.name === "track" && currentTrack
                 ? `${currentTrack.title} ・ ${
                     isSavingMarkers ? "マーカー保存中" : "保存済み"
                   }`
-                : "耳コピ用ワークスペース"}
+                : "保存済みMP3ライブラリ"}
             </p>
           </div>
-        </div>
+        </button>
 
-        <div className="sourceControls">
-          <input
-            ref={fileInputRef}
-            className="srOnly"
-            type="file"
-            accept="audio/mpeg,.mp3"
-            onChange={handleFileChange}
-          />
+        {route.name === "library" ? (
+          <div className="sourceControls">
+            <input
+              ref={fileInputRef}
+              className="srOnly"
+              type="file"
+              accept="audio/mpeg,.mp3"
+              onChange={handleFileChange}
+            />
+            <button
+              className="controlButton"
+              type="button"
+              title="MP3を選択"
+              disabled={isUploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {isUploading ? (
+                <LoaderCircle className="spin" size={18} />
+              ) : (
+                <Upload size={18} />
+              )}
+              <span>{isUploading ? "保存中" : "MP3"}</span>
+            </button>
+
+            <form className="youtubeForm" onSubmit={handleYoutubeSubmit}>
+              <label className="srOnly" htmlFor="youtube-url">
+                YouTube URL
+              </label>
+              <Link size={18} aria-hidden="true" />
+              <input
+                id="youtube-url"
+                type="url"
+                inputMode="url"
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={youtubeUrl}
+                onChange={(event) => setYoutubeUrl(event.target.value)}
+              />
+              <button
+                className="iconButton"
+                type="submit"
+                title="YouTubeを変換"
+                disabled={isConverting}
+              >
+                {isConverting ? (
+                  <LoaderCircle className="spin" size={18} />
+                ) : (
+                  <Plus size={18} />
+                )}
+              </button>
+            </form>
+          </div>
+        ) : (
           <button
             className="controlButton"
             type="button"
-            title="MP3を選択"
-            disabled={isUploading}
-            onClick={() => fileInputRef.current?.click()}
+            title="ライブラリへ戻る"
+            onClick={navigateToLibrary}
           >
-            {isUploading ? (
-              <LoaderCircle className="spin" size={18} />
-            ) : (
-              <Upload size={18} />
-            )}
-            <span>{isUploading ? "保存中" : "MP3"}</span>
+            <ArrowLeft size={18} />
+            <span>Library</span>
           </button>
-
-          <form className="youtubeForm" onSubmit={handleYoutubeSubmit}>
-            <label className="srOnly" htmlFor="youtube-url">
-              YouTube URL
-            </label>
-            <Link size={18} aria-hidden="true" />
-            <input
-              id="youtube-url"
-              type="url"
-              inputMode="url"
-              placeholder="https://www.youtube.com/watch?v=..."
-              value={youtubeUrl}
-              onChange={(event) => setYoutubeUrl(event.target.value)}
-            />
-            <button
-              className="iconButton"
-              type="submit"
-              title="YouTubeを変換"
-              disabled={isConverting}
-            >
-              {isConverting ? (
-                <LoaderCircle className="spin" size={18} />
-              ) : (
-                <Plus size={18} />
-              )}
-            </button>
-          </form>
-        </div>
+        )}
       </header>
 
-      <section className="studioGrid" aria-label="Audio editor">
-        <aside className="libraryPanel" aria-label="Saved MP3 library">
-          <div className="panelHeader">
+      {route.name === "library" ? (
+        <section className="libraryPage" aria-label="Saved MP3 library">
+          <div className="libraryPageHeader">
             <div>
               <h2>Library</h2>
               <p>{libraryTracks.length} saved MP3s</p>
@@ -1106,9 +1211,14 @@ export function App() {
             </button>
           </div>
 
-          <div className="libraryList">
+          <div className="statusStrip">
+            <span className={`statusPill ${loadState}`}>{loadState}</span>
+            <span>{message}</span>
+          </div>
+
+          <div className="trackList">
             {libraryTracks.length === 0 ? (
-              <div className="emptyMarkers">
+              <div className="emptyLibrary">
                 <ListMusic size={22} aria-hidden="true" />
                 <span>
                   {isLibraryLoading
@@ -1120,25 +1230,24 @@ export function App() {
               libraryTracks.map((track) => (
                 <div
                   key={track.id}
-                  className={`libraryItem ${
+                  className={`trackListItem ${
                     track.id === currentTrackId ? "active" : ""
                   }`}
                 >
                   <button
-                    className="libraryTrackButton"
+                    className="trackOpenButton"
                     type="button"
                     title={`${track.title} を開く`}
-                    onClick={() => loadTrackFromLibrary(track.id)}
+                    onClick={() => navigateToTrack(track.id)}
                   >
                     <Music2 size={18} aria-hidden="true" />
-                    <span className="libraryTrackText">
+                    <span className="trackTitleBlock">
                       <strong>{track.title}</strong>
-                      <span>
-                        {getSourceTypeLabel(track.sourceType)} ・{" "}
-                        {formatTime(track.duration)} ・ {track.markerCount} markers
-                      </span>
-                      <span>Updated {formatLibraryDate(track.updatedAt)}</span>
                     </span>
+                    <span>{getSourceTypeLabel(track.sourceType)}</span>
+                    <span>{formatTime(track.duration)}</span>
+                    <span>{track.markerCount} markers</span>
+                    <span>Updated {formatLibraryDate(track.updatedAt)}</span>
                   </button>
                   <button
                     className="iconButton danger"
@@ -1152,340 +1261,370 @@ export function App() {
               ))
             )}
           </div>
-        </aside>
-
-        <section className="workspace" aria-label="Waveform">
-          <div className="timelineMeta">
-            <span className={`statusPill ${loadState}`}>{loadState}</span>
-            <span>{message}</span>
-            <span className="timeReadout">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
-          </div>
-
-          <div
-            ref={waveformRef}
-            className="waveformSurface"
-            role="slider"
-            aria-label="再生位置"
-            aria-valuemin={0}
-            aria-valuemax={Math.max(0, Math.floor(duration))}
-            aria-valuenow={Math.floor(currentTime)}
-            tabIndex={0}
-            onPointerDown={handleWaveformPointerDown}
-          >
-            <canvas ref={canvasRef} className="waveformCanvas" />
-            {visibleMarkers.map((marker) => {
-              const markerLeft = `${timeToWaveformPercent(
-                marker.time,
-                waveformRange
-              )}%`;
-              const style: DynamicStyle = {
-                "--marker-left": markerLeft,
-                "--playhead-left": "0%"
-              };
-
-              return (
-                <button
-                  key={marker.id}
-                  className={`markerLine ${
-                    marker.id === selectedMarkerId ? "selected" : ""
-                  } ${marker.id === draggingMarkerId ? "dragging" : ""}`}
-                  draggable
-                  style={style}
-                  type="button"
-                  title={`${marker.label} ${formatTime(marker.time)}`}
-                  onDragStart={(event) => {
-                    event.stopPropagation();
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", marker.id);
-                    setSelectedMarkerId(marker.id);
-                    startDraggingMarker(marker.id);
-                    moveMarkerFromPointer(marker.id, event.clientX);
-                  }}
-                  onDrag={(event) => {
-                    if (
-                      draggingMarkerIdRef.current !== marker.id ||
-                      event.clientX <= 0
-                    ) {
-                      return;
-                    }
-
-                    event.preventDefault();
-                    event.stopPropagation();
-                    moveMarkerFromPointer(marker.id, event.clientX);
-                  }}
-                  onDragEnd={(event) => {
-                    event.stopPropagation();
-
-                    if (event.clientX > 0) {
-                      moveMarkerFromPointer(marker.id, event.clientX);
-                    }
-
-                    stopDraggingMarker();
-                  }}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                    setSelectedMarkerId(marker.id);
-                    startDraggingMarker(marker.id);
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    moveMarkerFromPointer(marker.id, event.clientX);
-                  }}
-                  onPointerMove={(event) => {
-                    if (draggingMarkerIdRef.current !== marker.id) {
-                      return;
-                    }
-
-                    event.stopPropagation();
-                    moveMarkerFromPointer(marker.id, event.clientX);
-                  }}
-                  onPointerUp={(event) => {
-                    event.stopPropagation();
-                    stopDraggingMarker();
-
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      event.currentTarget.releasePointerCapture(event.pointerId);
-                    }
-                  }}
-                  onPointerCancel={(event) => {
-                    stopDraggingMarker();
-
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                      event.currentTarget.releasePointerCapture(event.pointerId);
-                    }
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setSelectedMarkerId(marker.id);
-                    seekTo(marker.time);
-                  }}
-                />
-              );
-            })}
-            <div
-              className="playhead"
-              style={playheadStyle}
-            />
-          </div>
         </section>
-
-        <aside className="markerPanel" aria-label="Markers">
-          <div className="panelHeader">
-            <div>
-              <h2>Markers</h2>
-              <p>{selectedMarker ? selectedMarker.label : "No selection"}</p>
+      ) : (
+        <>
+          <section className="editorPage" aria-label="Audio editor">
+            <div className="editorHeader">
+              <div>
+                <h2>{currentTrack?.title ?? "曲を読み込み中"}</h2>
+                <p>{isSavingMarkers ? "マーカー保存中" : message}</p>
+              </div>
+              <span className="timeReadout">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
             </div>
-            <button
-              className="iconButton"
-              type="button"
-              title="選択マーカーへ戻る"
-              disabled={sortedMarkers.length === 0}
-              onClick={returnToMarker}
-            >
-              <RotateCcw size={18} />
-            </button>
-          </div>
 
-          <div className="markerComposer">
-            <MapPin size={18} aria-hidden="true" />
-            <label className="srOnly" htmlFor="marker-time">
-              Marker time
-            </label>
-            <input
-              id="marker-time"
-              value={markerInput}
-              onChange={(event) => setMarkerInput(event.target.value)}
-              placeholder="1:23"
-            />
-            <button
-              className="iconButton"
-              type="button"
-              title="現在位置を入力"
-              onClick={() => setMarkerInput(formatTime(currentTime))}
-            >
-              <Clock3 size={18} />
-            </button>
-            <button
-              className="iconButton accent"
-              type="button"
-              title="入力時刻にマーカー追加"
-              disabled={!audioSource}
-              onClick={addMarkerFromInput}
-            >
-              <Plus size={18} />
-            </button>
-          </div>
+            <div className="editorGrid">
+              <section className="workspace" aria-label="Waveform">
+                <div className="timelineMeta">
+                  <span className={`statusPill ${loadState}`}>{loadState}</span>
+                  <span>{message}</span>
+                  <span className="timeReadout">
+                    {formatTime(currentTime)} / {formatTime(duration)}
+                  </span>
+                </div>
 
-          <div className="markerList">
-            {sortedMarkers.length === 0 ? (
-              <div className="emptyMarkers">No markers</div>
-            ) : (
-              sortedMarkers.map((marker) => (
                 <div
-                  key={marker.id}
-                  className={`markerItem ${
-                    marker.id === selectedMarkerId ? "selected" : ""
-                  }`}
+                  ref={waveformRef}
+                  className="waveformSurface"
+                  role="slider"
+                  aria-label="再生位置"
+                  aria-valuemin={0}
+                  aria-valuemax={Math.max(0, Math.floor(duration))}
+                  aria-valuenow={Math.floor(currentTime)}
+                  tabIndex={0}
+                  onPointerDown={handleWaveformPointerDown}
                 >
-                  <div className="markerEditor">
-                    <input
-                      aria-label={`${marker.label} label`}
-                      className="markerLabelInput"
-                      value={marker.label}
-                      onBlur={() => finishRenamingMarker(marker.id)}
-                      onChange={(event) =>
-                        renameMarker(marker.id, event.target.value)
-                      }
-                    />
-                    <input
-                      aria-label={`${marker.label} time`}
-                      className="markerTimeInput"
-                      inputMode="numeric"
-                      value={markerTimeDrafts[marker.id] ?? formatTime(marker.time)}
-                      onBlur={() => finishMarkerTimeInput(marker.id)}
-                      onChange={(event) =>
-                        changeMarkerTimeInput(marker.id, event.target.value)
-                      }
-                    />
+                  <canvas ref={canvasRef} className="waveformCanvas" />
+                  {visibleMarkers.map((marker) => {
+                    const markerLeft = `${timeToWaveformPercent(
+                      marker.time,
+                      waveformRange
+                    )}%`;
+                    const style: DynamicStyle = {
+                      "--marker-left": markerLeft,
+                      "--playhead-left": "0%"
+                    };
+
+                    return (
+                      <button
+                        key={marker.id}
+                        className={`markerLine ${
+                          marker.id === selectedMarkerId ? "selected" : ""
+                        } ${marker.id === draggingMarkerId ? "dragging" : ""}`}
+                        draggable
+                        style={style}
+                        type="button"
+                        title={`${marker.label} ${formatTime(marker.time)}`}
+                        onDragStart={(event) => {
+                          event.stopPropagation();
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", marker.id);
+                          setSelectedMarkerId(marker.id);
+                          startDraggingMarker(marker.id);
+                          moveMarkerFromPointer(marker.id, event.clientX);
+                        }}
+                        onDrag={(event) => {
+                          if (
+                            draggingMarkerIdRef.current !== marker.id ||
+                            event.clientX <= 0
+                          ) {
+                            return;
+                          }
+
+                          event.preventDefault();
+                          event.stopPropagation();
+                          moveMarkerFromPointer(marker.id, event.clientX);
+                        }}
+                        onDragEnd={(event) => {
+                          event.stopPropagation();
+
+                          if (event.clientX > 0) {
+                            moveMarkerFromPointer(marker.id, event.clientX);
+                          }
+
+                          stopDraggingMarker();
+                        }}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          setSelectedMarkerId(marker.id);
+                          startDraggingMarker(marker.id);
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          moveMarkerFromPointer(marker.id, event.clientX);
+                        }}
+                        onPointerMove={(event) => {
+                          if (draggingMarkerIdRef.current !== marker.id) {
+                            return;
+                          }
+
+                          event.stopPropagation();
+                          moveMarkerFromPointer(marker.id, event.clientX);
+                        }}
+                        onPointerUp={(event) => {
+                          event.stopPropagation();
+                          stopDraggingMarker();
+
+                          if (
+                            event.currentTarget.hasPointerCapture(
+                              event.pointerId
+                            )
+                          ) {
+                            event.currentTarget.releasePointerCapture(
+                              event.pointerId
+                            );
+                          }
+                        }}
+                        onPointerCancel={(event) => {
+                          stopDraggingMarker();
+
+                          if (
+                            event.currentTarget.hasPointerCapture(
+                              event.pointerId
+                            )
+                          ) {
+                            event.currentTarget.releasePointerCapture(
+                              event.pointerId
+                            );
+                          }
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMarkerId(marker.id);
+                          seekTo(marker.time);
+                        }}
+                      />
+                    );
+                  })}
+                  <div className="playhead" style={playheadStyle} />
+                </div>
+              </section>
+
+              <aside className="markerPanel" aria-label="Markers">
+                <div className="panelHeader">
+                  <div>
+                    <h2>Markers</h2>
+                    <p>
+                      {selectedMarker ? selectedMarker.label : "No selection"}
+                    </p>
                   </div>
                   <button
                     className="iconButton"
                     type="button"
-                    title="マーカーへ移動"
-                    onClick={() => {
-                      setSelectedMarkerId(marker.id);
-                      seekTo(marker.time);
-                    }}
+                    title="選択マーカーへ戻る"
+                    disabled={sortedMarkers.length === 0}
+                    onClick={returnToMarker}
                   >
-                    <MapPin size={17} />
-                  </button>
-                  <button
-                    className="iconButton danger"
-                    type="button"
-                    title="マーカー削除"
-                    onClick={() => deleteMarker(marker.id)}
-                  >
-                    <Trash2 size={17} />
+                    <RotateCcw size={18} />
                   </button>
                 </div>
-              ))
-            )}
-          </div>
-        </aside>
-      </section>
 
-      <footer className="transportBar">
-        <div className="transportCluster">
-          <button
-            className="transportButton primary"
-            type="button"
-            title={isPlaying ? "停止" : "再生"}
-            disabled={!audioSource}
-            onClick={togglePlayback}
-          >
-            {isPlaying ? <Pause size={21} /> : <Play size={21} />}
-            <span>{isPlaying ? "停止" : "再生"}</span>
-          </button>
-          <button
-            className="transportButton"
-            type="button"
-            title="5秒戻る"
-            disabled={!audioSource}
-            onClick={() => seekTo(seekBy(currentTime, -5, duration))}
-          >
-            <span>-5s</span>
-          </button>
-          <button
-            className="transportButton"
-            type="button"
-            title="5秒進む"
-            disabled={!audioSource}
-            onClick={() => seekTo(seekBy(currentTime, 5, duration))}
-          >
-            <span>+5s</span>
-          </button>
-          <button
-            className="transportButton"
-            type="button"
-            title="10秒戻る"
-            disabled={!audioSource}
-            onClick={() => seekTo(seekBy(currentTime, -10, duration))}
-          >
-            <span>-10s</span>
-          </button>
-          <button
-            className="transportButton"
-            type="button"
-            title="10秒進む"
-            disabled={!audioSource}
-            onClick={() => seekTo(seekBy(currentTime, 10, duration))}
-          >
-            <span>+10s</span>
-          </button>
-          <button
-            className="transportButton accent"
-            type="button"
-            title="現在位置にマーカー追加"
-            disabled={!audioSource}
-            onClick={() => addMarkerAt(currentTime)}
-          >
-            <MapPin size={18} />
-            <span>Marker</span>
-          </button>
-        </div>
+                <div className="markerComposer">
+                  <MapPin size={18} aria-hidden="true" />
+                  <label className="srOnly" htmlFor="marker-time">
+                    Marker time
+                  </label>
+                  <input
+                    id="marker-time"
+                    value={markerInput}
+                    onChange={(event) => setMarkerInput(event.target.value)}
+                    placeholder="1:23"
+                  />
+                  <button
+                    className="iconButton"
+                    type="button"
+                    title="現在位置を入力"
+                    onClick={() => setMarkerInput(formatTime(currentTime))}
+                  >
+                    <Clock3 size={18} />
+                  </button>
+                  <button
+                    className="iconButton accent"
+                    type="button"
+                    title="入力時刻にマーカー追加"
+                    disabled={!audioSource}
+                    onClick={addMarkerFromInput}
+                  >
+                    <Plus size={18} />
+                  </button>
+                </div>
 
-        <div className="zoomCluster" aria-label="Waveform zoom">
-          <ZoomOut size={18} aria-hidden="true" />
-          <button
-            className="iconButton"
-            type="button"
-            title="波形を縮小"
-            disabled={waveformZoom === 1}
-            onClick={() => changeWaveformZoom("out")}
-          >
-            <ZoomOut size={17} />
-          </button>
-          <strong>{waveformZoom}x</strong>
-          <button
-            className="iconButton"
-            type="button"
-            title="波形を拡大"
-            disabled={waveformZoom === 16}
-            onClick={() => changeWaveformZoom("in")}
-          >
-            <ZoomIn size={17} />
-          </button>
-        </div>
+                <div className="markerList">
+                  {sortedMarkers.length === 0 ? (
+                    <div className="emptyMarkers">No markers</div>
+                  ) : (
+                    sortedMarkers.map((marker) => (
+                      <div
+                        key={marker.id}
+                        className={`markerItem ${
+                          marker.id === selectedMarkerId ? "selected" : ""
+                        }`}
+                      >
+                        <div className="markerEditor">
+                          <input
+                            aria-label={`${marker.label} label`}
+                            className="markerLabelInput"
+                            value={marker.label}
+                            onBlur={() => finishRenamingMarker(marker.id)}
+                            onChange={(event) =>
+                              renameMarker(marker.id, event.target.value)
+                            }
+                          />
+                          <input
+                            aria-label={`${marker.label} time`}
+                            className="markerTimeInput"
+                            inputMode="numeric"
+                            value={
+                              markerTimeDrafts[marker.id] ??
+                              formatTime(marker.time)
+                            }
+                            onBlur={() => finishMarkerTimeInput(marker.id)}
+                            onChange={(event) =>
+                              changeMarkerTimeInput(marker.id, event.target.value)
+                            }
+                          />
+                        </div>
+                        <button
+                          className="iconButton"
+                          type="button"
+                          title="マーカーへ移動"
+                          onClick={() => {
+                            setSelectedMarkerId(marker.id);
+                            seekTo(marker.time);
+                          }}
+                        >
+                          <MapPin size={17} />
+                        </button>
+                        <button
+                          className="iconButton danger"
+                          type="button"
+                          title="マーカー削除"
+                          onClick={() => deleteMarker(marker.id)}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
 
-        <div className="speedCluster" aria-label="Playback speed">
-          <Gauge size={18} aria-hidden="true" />
-          <button
-            className="iconButton"
-            type="button"
-            title="速度を下げる"
-            onClick={() =>
-              setPlaybackRate((currentRate) =>
-                nextPlaybackRate(currentRate, "slower")
-              )
-            }
-          >
-            <span>,</span>
-          </button>
-          <strong>{playbackRate}x</strong>
-          <button
-            className="iconButton"
-            type="button"
-            title="速度を上げる"
-            onClick={() =>
-              setPlaybackRate((currentRate) =>
-                nextPlaybackRate(currentRate, "faster")
-              )
-            }
-          >
-            <span>.</span>
-          </button>
-        </div>
-      </footer>
+          <footer className="transportBar">
+            <div className="transportCluster">
+              <button
+                className="transportButton primary"
+                type="button"
+                title={isPlaying ? "停止" : "再生"}
+                disabled={!audioSource}
+                onClick={togglePlayback}
+              >
+                {isPlaying ? <Pause size={21} /> : <Play size={21} />}
+                <span>{isPlaying ? "停止" : "再生"}</span>
+              </button>
+              <button
+                className="transportButton"
+                type="button"
+                title="5秒戻る"
+                disabled={!audioSource}
+                onClick={() => seekTo(seekBy(currentTime, -5, duration))}
+              >
+                <span>-5s</span>
+              </button>
+              <button
+                className="transportButton"
+                type="button"
+                title="5秒進む"
+                disabled={!audioSource}
+                onClick={() => seekTo(seekBy(currentTime, 5, duration))}
+              >
+                <span>+5s</span>
+              </button>
+              <button
+                className="transportButton"
+                type="button"
+                title="10秒戻る"
+                disabled={!audioSource}
+                onClick={() => seekTo(seekBy(currentTime, -10, duration))}
+              >
+                <span>-10s</span>
+              </button>
+              <button
+                className="transportButton"
+                type="button"
+                title="10秒進む"
+                disabled={!audioSource}
+                onClick={() => seekTo(seekBy(currentTime, 10, duration))}
+              >
+                <span>+10s</span>
+              </button>
+              <button
+                className="transportButton accent"
+                type="button"
+                title="現在位置にマーカー追加"
+                disabled={!audioSource}
+                onClick={() => addMarkerAt(currentTime)}
+              >
+                <MapPin size={18} />
+                <span>Marker</span>
+              </button>
+            </div>
+
+            <div className="zoomCluster" aria-label="Waveform zoom">
+              <ZoomOut size={18} aria-hidden="true" />
+              <button
+                className="iconButton"
+                type="button"
+                title="波形を縮小"
+                disabled={waveformZoom === 1}
+                onClick={() => changeWaveformZoom("out")}
+              >
+                <ZoomOut size={17} />
+              </button>
+              <strong>{waveformZoom}x</strong>
+              <button
+                className="iconButton"
+                type="button"
+                title="波形を拡大"
+                disabled={waveformZoom === 16}
+                onClick={() => changeWaveformZoom("in")}
+              >
+                <ZoomIn size={17} />
+              </button>
+            </div>
+
+            <div className="speedCluster" aria-label="Playback speed">
+              <Gauge size={18} aria-hidden="true" />
+              <button
+                className="iconButton"
+                type="button"
+                title="速度を下げる"
+                onClick={() =>
+                  setPlaybackRate((currentRate) =>
+                    nextPlaybackRate(currentRate, "slower")
+                  )
+                }
+              >
+                <span>,</span>
+              </button>
+              <strong>{playbackRate}x</strong>
+              <button
+                className="iconButton"
+                type="button"
+                title="速度を上げる"
+                onClick={() =>
+                  setPlaybackRate((currentRate) =>
+                    nextPlaybackRate(currentRate, "faster")
+                  )
+                }
+              >
+                <span>.</span>
+              </button>
+            </div>
+          </footer>
+        </>
+      )}
     </main>
   );
 }

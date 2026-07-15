@@ -59,10 +59,14 @@ button {
 .appShell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   align-content: start;
   gap: 16px;
   padding: 18px;
+}
+
+.libraryRoute {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .topBar,
@@ -88,6 +92,20 @@ button {
   gap: 12px;
 }
 
+.brandButton {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brandButton:focus-visible {
+  outline: 2px solid rgba(244, 162, 97, 0.72);
+  outline-offset: 4px;
+}
+
 .brandMark {
   width: 42px;
   height: 42px;
@@ -101,6 +119,10 @@ button {
 
 .brandBlock h1,
 .brandBlock p,
+.editorHeader h2,
+.editorHeader p,
+.libraryPageHeader h2,
+.libraryPageHeader p,
 .panelHeader h2,
 .panelHeader p {
   margin: 0;
@@ -112,6 +134,8 @@ button {
 }
 
 .brandBlock p,
+.editorHeader p,
+.libraryPageHeader p,
 .panelHeader p,
 .timelineMeta {
   color: var(--muted);
@@ -218,12 +242,121 @@ button {
   background: rgba(231, 111, 81, 0.16);
 }
 
-.studioGrid {
+.libraryPage,
+.editorPage {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: rgba(26, 26, 24, 0.86);
+}
+
+.libraryPage {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.libraryPageHeader,
+.editorHeader {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.libraryPageHeader h2,
+.editorHeader h2 {
+  font-size: 1rem;
+}
+
+.statusStrip {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.trackList {
+  min-height: 0;
+  overflow: auto;
+}
+
+.trackListItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
+.trackListItem.active {
+  background: rgba(42, 157, 143, 0.11);
+}
+
+.trackOpenButton {
+  min-width: 0;
+  border: 0;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 24px minmax(220px, 1fr) 96px 90px 120px 150px;
+  gap: 14px;
+  align-items: center;
+  color: var(--paper);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.trackOpenButton:hover,
+.trackOpenButton:focus-visible {
+  outline: 0;
+  background: rgba(247, 247, 242, 0.07);
+}
+
+.trackOpenButton > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trackTitleBlock strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--paper);
+  font-size: 0.94rem;
+  line-height: 1.28;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emptyLibrary {
+  min-height: 280px;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  color: var(--quiet);
+  text-align: center;
+}
+
+.editorPage {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.editorGrid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 310px) minmax(0, 1fr) minmax(260px, 330px);
-  align-items: start;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  align-items: stretch;
 }
 
 .workspace,
@@ -237,6 +370,8 @@ button {
 .workspace {
   display: grid;
   grid-template-rows: auto auto;
+  border-width: 0;
+  border-right-width: 1px;
 }
 
 .timelineMeta {
@@ -279,7 +414,7 @@ button {
 
 .waveformSurface {
   position: relative;
-  height: clamp(160px, 24vh, 220px);
+  height: clamp(260px, 44vh, 520px);
   min-height: 0;
   overflow: hidden;
   cursor: crosshair;
@@ -358,6 +493,7 @@ button {
 .markerPanel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  border-width: 0;
 }
 
 .libraryPanel {
@@ -570,12 +706,25 @@ button {
     width: 100%;
   }
 
-  .studioGrid {
+  .editorGrid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    border-right-width: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .markerPanel {
     min-height: 320px;
+  }
+
+  .trackOpenButton {
+    grid-template-columns: 24px minmax(0, 1fr) 88px;
+  }
+
+  .trackOpenButton > span:nth-of-type(n + 3) {
+    display: none;
   }
 
   .transportCluster,
@@ -599,12 +748,33 @@ button {
     padding: 12px;
   }
 
+  .statusStrip,
+  .libraryPageHeader,
+  .editorHeader {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .libraryPageHeader,
+  .editorHeader {
+    display: grid;
+  }
+
   .waveformSurface {
-    height: clamp(140px, 34vh, 180px);
+    height: clamp(220px, 42vh, 340px);
   }
 
   .transportButton {
     flex: 1;
+  }
+
+  .trackOpenButton {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .trackOpenButton > span:nth-of-type(n + 2) {
+    display: none;
   }
 
   .markerItem,
