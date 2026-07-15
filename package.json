@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n CLIENT,API -c cyan,magenta \"pnpm dev:client\" \"pnpm dev:server\"",
-    "dev:client": "vite --host 127.0.0.1",
+    "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "pnpm typecheck && vite build",
     "lint": "oxlint .",

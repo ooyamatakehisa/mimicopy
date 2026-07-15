@@ -6,6 +6,10 @@ const apiPort = process.env.MIMICOPY_API_PORT ?? "5174";
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: "127.0.0.1",
+    port: 8080,
+    strictPort: true,
+    allowedHosts: ["mimicopy.plinponick.com"],
     proxy: {
       "/api": `http://127.0.0.1:${apiPort}`,
       "/media": `http://127.0.0.1:${apiPort}`

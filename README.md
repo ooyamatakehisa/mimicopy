@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Node.js 26+
+- Node.js 22.13.0
 - pnpm 11+
 - `ffmpeg` in `PATH` for YouTube-to-mp3 conversion
 
@@ -17,7 +17,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://127.0.0.1:5173/`.
+Open `http://127.0.0.1:8080/`.
 
 ## Verification
 
