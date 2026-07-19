@@ -182,6 +182,13 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
     "e2e-tone.mp3 を読み込みました。"
   );
+  const editor = page.getByLabel("Audio editor");
+  await editor.getByTitle("表示名を編集").click();
+  await editor.getByLabel("e2e-tone.mp3 display name").fill("Detail practice");
+  await editor.getByTitle("表示名を保存").click();
+  await expect(
+    page.getByRole("heading", { name: "Detail practice" })
+  ).toBeVisible();
   const trackId = new URL(page.url()).pathname.split("/").at(-1);
 
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
@@ -258,9 +265,9 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");
-  await expect(library).toContainText("e2e-tone.mp3");
+  await expect(library).toContainText("Detail practice");
   await library.getByTitle("表示名を編集").click();
-  await library.getByLabel("e2e-tone.mp3 display name").fill("Practice loop");
+  await library.getByLabel("Detail practice display name").fill("Practice loop");
   await library.getByTitle("表示名を保存").click();
   await expect(library).toContainText("Practice loop");
 

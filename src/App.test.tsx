@@ -190,6 +190,38 @@ describe("App", () => {
     expect(tracks[0]?.title).toBe("Shadowing drill");
   });
 
+  it("renames a saved mp3 from the track editor", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
+    fireEvent.click(screen.getByTitle("表示名を編集"));
+    fireEvent.change(screen.getByLabelText("phrase.mp3 display name"), {
+      target: { value: "Focused phrase" }
+    });
+    fireEvent.click(screen.getByTitle("表示名を保存"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Focused phrase" })
+      ).toBeVisible();
+    });
+
+    expect(screen.getByText("Focused phrase に変更しました。")).toBeVisible();
+    expect(tracks[0]?.title).toBe("Focused phrase");
+
+    fireEvent.click(screen.getByTitle("ライブラリへ戻る"));
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Focused phrase を開く")).toBeVisible();
+    });
+  });
+
   it("changes playback speed with keyboard shortcuts while a button is focused", async () => {
     tracks = [createTrack()];
     window.history.replaceState(null, "", "/tracks/track-1");

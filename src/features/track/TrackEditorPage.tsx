@@ -1,18 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
-import { LoaderCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, LoaderCircle, Pencil, X } from "lucide-react";
 import { AppHeader } from "../../components/layout/AppHeader";
+import { IconButton } from "../../components/ui/Button";
 import { SectionHeader, Surface } from "../../components/ui/Surface";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
 import {
   decodedTrackQueryKey,
   fetchMediaArrayBuffer,
   fetchTrack,
-  trackQueryKey
+  trackQueryKey,
+  updateTrackTitle
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
 import type { TrackDetail } from "../../lib/library";
 import { formatTime } from "../../lib/playback";
+import { cacheTrack } from "../../lib/trackQueryCache";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
@@ -146,6 +151,13 @@ function TrackEditor({
   navigateToLibrary: () => void;
   track: TrackDetail;
 }) {
+  const queryClient = useQueryClient();
+  const titleMutation = useMutation({
+    mutationFn: updateTrackTitle,
+    onSuccess: (updatedTrack) => {
+      cacheTrack(queryClient, updatedTrack);
+    }
+  });
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
     trackDuration: track.duration,
@@ -170,6 +182,33 @@ function TrackEditor({
     playback.durationErrorMessage
       ? "error"
       : "ready";
+  const titleMessage = titleMutation.isPending
+    ? `${titleMutation.variables?.title.trim() ?? track.title} を保存しています。`
+    : titleMutation.isError
+      ? getErrorMessage(titleMutation.error, "表示名を保存できませんでした。")
+      : titleMutation.isSuccess
+        ? `${titleMutation.data.title} に変更しました。`
+        : null;
+  const description =
+    titleMessage ?? (markers.isSavingMarkers ? "マーカー保存中" : message);
+
+  const renameTrack = async (title: string) => {
+    const trimmedTitle = title.trim();
+
+    if (!trimmedTitle || trimmedTitle === track.title) {
+      return true;
+    }
+
+    try {
+      await titleMutation.mutateAsync({
+        title: trimmedTitle,
+        trackId: track.id
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   return (
     <>
@@ -189,11 +228,20 @@ function TrackEditor({
       >
         <SectionHeader
           title={track.title}
-          description={markers.isSavingMarkers ? "マーカー保存中" : message}
+          description={description}
           action={
-            <span className="whitespace-nowrap text-sm font-bold tabular-nums text-ink">
-              {formatTime(playback.currentTime)} / {formatTime(playback.duration)}
-            </span>
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2">
+              <TrackTitleActions
+                title={track.title}
+                isSaving={titleMutation.isPending}
+                onRename={renameTrack}
+                onStartEditing={titleMutation.reset}
+              />
+              <span className="whitespace-nowrap text-sm font-bold tabular-nums text-ink">
+                {formatTime(playback.currentTime)} /{" "}
+                {formatTime(playback.duration)}
+              </span>
+            </div>
           }
         />
 
@@ -223,5 +271,103 @@ function TrackEditor({
         waveform={waveform}
       />
     </>
+  );
+}
+
+function TrackTitleActions({
+  isSaving,
+  onRename,
+  onStartEditing,
+  title
+}: {
+  isSaving: boolean;
+  onRename: (title: string) => Promise<boolean>;
+  onStartEditing: () => void;
+  title: string;
+}) {
+  const [draftTitle, setDraftTitle] = useState(title);
+  const [isEditing, setIsEditing] = useState(false);
+  const trimmedTitle = draftTitle.trim();
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftTitle(title);
+    }
+  }, [isEditing, title]);
+
+  const startEditing = () => {
+    onStartEditing();
+    setDraftTitle(title);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setDraftTitle(title);
+    setIsEditing(false);
+  };
+
+  const saveTitle = async () => {
+    if (!trimmedTitle) {
+      return;
+    }
+
+    if (await onRename(trimmedTitle)) {
+      setDraftTitle(trimmedTitle);
+      setIsEditing(false);
+    }
+  };
+
+  if (!isEditing) {
+    return (
+      <IconButton title="表示名を編集" onClick={startEditing}>
+        <Pencil size={16} />
+      </IconButton>
+    );
+  }
+
+  return (
+    <div className="grid min-w-0 flex-1 grid-cols-[minmax(160px,260px)_auto_auto] items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+      <TextInput
+        aria-label={`${title} display name`}
+        autoFocus
+        className="h-10 rounded-2xl text-base font-semibold"
+        disabled={isSaving}
+        maxLength={180}
+        value={draftTitle}
+        onChange={(event) => setDraftTitle(event.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void saveTitle();
+          }
+
+          if (event.key === "Escape") {
+            event.preventDefault();
+            cancelEditing();
+          }
+        }}
+      />
+      <IconButton
+        className="size-10"
+        disabled={!trimmedTitle || isSaving}
+        title="表示名を保存"
+        onClick={() => void saveTitle()}
+      >
+        {isSaving ? (
+          <LoaderCircle className="animate-spin" size={16} />
+        ) : (
+          <Check size={16} />
+        )}
+      </IconButton>
+      <IconButton
+        className="size-10"
+        disabled={isSaving}
+        title="表示名の編集をキャンセル"
+        onClick={cancelEditing}
+      >
+        <X size={16} />
+      </IconButton>
+    </div>
   );
 }
