@@ -34,9 +34,11 @@ export function LibraryPage({
         activeTrackId={activeTrackId}
         deleteTrackFromLibrary={library.deleteTrackFromLibrary}
         isLibraryLoading={library.isLibraryLoading}
+        isRenamingTrackId={library.isRenamingTrackId}
         loadState={library.loadState}
         message={library.message}
         navigateToTrack={navigateToTrack}
+        renameTrackInLibrary={library.renameTrackInLibrary}
         refreshTracks={library.refreshTracks}
         tracks={library.tracks}
       />

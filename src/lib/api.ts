@@ -93,6 +93,26 @@ export async function updateTrackDuration({
   return parseTrackResponse(body);
 }
 
+export async function updateTrackTitle({
+  title,
+  trackId
+}: {
+  title: string;
+  trackId: string;
+}) {
+  const response = await fetch(`/api/tracks/${encodeURIComponent(trackId)}`, {
+    body: JSON.stringify({ title }),
+    headers: { "Content-Type": "application/json" },
+    method: "PATCH"
+  });
+  const body = await parseJsonResponse(
+    response,
+    "表示名を保存できませんでした。"
+  );
+
+  return parseTrackResponse(body);
+}
+
 export async function saveTrackMarkers({
   markers,
   trackId

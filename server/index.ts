@@ -59,6 +59,7 @@ type MarkersRequestBody = {
 
 type TrackPatchRequestBody = {
   duration?: unknown;
+  title?: unknown;
 };
 
 type TrackDeleteResponseBody =
@@ -223,6 +224,29 @@ function parseDuration(value: unknown) {
   }
 
   return value;
+}
+
+function parseTrackTitle(value: unknown) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new InputError("Track title is required.");
+  }
+
+  return value;
+}
+
+function parseTrackPatchBody(value: unknown): TrackPatchRequestBody {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new InputError("Track update must be an object.");
+  }
+
+  return value;
+}
+
+function hasPatchField(
+  body: TrackPatchRequestBody,
+  field: keyof TrackPatchRequestBody
+) {
+  return Object.prototype.hasOwnProperty.call(body, field);
 }
 
 function parseMarkers(value: unknown) {
@@ -501,10 +525,29 @@ export function createApp(options: CreateAppOptions = {}) {
       response: Response<TrackResponseBody>
     ) => {
       try {
-        const track = store.updateTrackDuration(
-          getTrackId(request),
-          parseDuration(request.body.duration)
-        );
+        const trackId = getTrackId(request);
+        const patchBody = parseTrackPatchBody(request.body);
+        const hasDuration = hasPatchField(patchBody, "duration");
+        const hasTitle = hasPatchField(patchBody, "title");
+        let track: LibraryTrack | null = null;
+
+        if (!hasDuration && !hasTitle) {
+          throw new InputError("Track update requires a title or duration.");
+        }
+
+        if (hasTitle) {
+          track = store.updateTrackTitle(
+            trackId,
+            parseTrackTitle(patchBody.title)
+          );
+        }
+
+        if (hasDuration) {
+          track = store.updateTrackDuration(
+            trackId,
+            parseDuration(patchBody.duration)
+          );
+        }
 
         if (!track) {
           response.status(404).json({ error: "Track was not found." });

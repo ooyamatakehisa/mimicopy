@@ -69,4 +69,25 @@ describe("LibraryStore", () => {
     });
     store.close();
   });
+
+  it("updates track display titles", async () => {
+    const paths = await createTempStorage();
+    const store = createLibraryStore(paths);
+    const track = store.createTrack({
+      duration: 0,
+      mediaFilename: "phrase.mp3",
+      sourceType: "upload",
+      title: "phrase.mp3"
+    });
+
+    const updatedTrack = store.updateTrackTitle(track.id, "Shadowing drill");
+
+    expect(updatedTrack?.title).toBe("Shadowing drill");
+    store.close();
+
+    const reopenedStore = createLibraryStore(paths);
+
+    expect(reopenedStore.getTrack(track.id)?.title).toBe("Shadowing drill");
+    reopenedStore.close();
+  });
 });

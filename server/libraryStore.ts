@@ -69,11 +69,16 @@ function toMediaUrl(mediaFilename: string) {
   return `/media/${encodeURIComponent(mediaFilename)}`;
 }
 
-function normalizeTitle(title: string) {
-  const baseName = path.basename(title.replaceAll("\\", "/"));
-  const cleanTitle = baseName.replaceAll("\0", "").trim();
+function normalizeDisplayTitle(title: string) {
+  const cleanTitle = title.replaceAll("\0", "").trim();
 
   return cleanTitle.length > 0 ? cleanTitle.slice(0, 180) : "Untitled MP3";
+}
+
+function normalizeTitle(title: string) {
+  const baseName = path.basename(title.replaceAll("\\", "/"));
+
+  return normalizeDisplayTitle(baseName);
 }
 
 function rowToTrackSummary(row: Record<string, unknown>): LibraryTrackSummary {
@@ -260,6 +265,22 @@ export class LibraryStore {
         `
       )
       .run(Math.max(0, duration), now, trackId);
+
+    return this.getTrack(trackId);
+  }
+
+  updateTrackTitle(trackId: string, title: string) {
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          UPDATE tracks
+          SET title = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(normalizeDisplayTitle(title), now, trackId);
 
     return this.getTrack(trackId);
   }

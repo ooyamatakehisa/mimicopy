@@ -259,6 +259,10 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");
   await expect(library).toContainText("e2e-tone.mp3");
+  await library.getByTitle("表示名を編集").click();
+  await library.getByLabel("e2e-tone.mp3 display name").fill("Practice loop");
+  await library.getByTitle("表示名を保存").click();
+  await expect(library).toContainText("Practice loop");
 
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();

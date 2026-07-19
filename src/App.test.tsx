@@ -84,7 +84,19 @@ describe("App", () => {
         }
 
         if (url === "/api/tracks/track-1" && method === "PATCH") {
-          const track = { ...(tracks[0] ?? createTrack()), duration: 10 };
+          const body =
+            typeof init?.body === "string"
+              ? (JSON.parse(init.body) as { duration?: unknown; title?: unknown })
+              : {};
+          const currentTrack = tracks[0] ?? createTrack();
+          const track = {
+            ...currentTrack,
+            duration:
+              typeof body.duration === "number" ? body.duration : currentTrack.duration,
+            title:
+              typeof body.title === "string" ? body.title.trim() : currentTrack.title,
+            updatedAt: "2026-07-16T00:00:00.000Z"
+          };
           tracks = [track];
 
           return Response.json({ track });
@@ -151,6 +163,31 @@ describe("App", () => {
     expect(window.location.pathname).toBe("/tracks/track-1");
     expect(screen.getByDisplayValue("Verse")).toBeVisible();
     expect(screen.getByLabelText("Verse time")).toHaveValue("0:03");
+  });
+
+  it("renames a saved mp3 from the library", async () => {
+    tracks = [
+      createTrack({
+        title: "saved-phrase.mp3"
+      })
+    ];
+
+    render(<App />);
+
+    await screen.findByTitle("saved-phrase.mp3 を開く");
+
+    fireEvent.click(screen.getByTitle("表示名を編集"));
+    fireEvent.change(screen.getByLabelText("saved-phrase.mp3 display name"), {
+      target: { value: "Shadowing drill" }
+    });
+    fireEvent.click(screen.getByTitle("表示名を保存"));
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Shadowing drill を開く")).toBeVisible();
+    });
+
+    expect(screen.getByText("Shadowing drill に変更しました。")).toBeVisible();
+    expect(tracks[0]?.title).toBe("Shadowing drill");
   });
 
   it("changes playback speed with keyboard shortcuts while a button is focused", async () => {

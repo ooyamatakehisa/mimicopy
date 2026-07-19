@@ -5,6 +5,7 @@ import {
   deleteTrack,
   fetchTracks,
   tracksQueryKey,
+  updateTrackTitle,
   uploadTrack
 } from "../../lib/api";
 import type { LoadState } from "../../lib/loadState";
@@ -38,6 +39,7 @@ export function useLibraryState({
   const uploadMutation = useMutation({ mutationFn: uploadTrack });
   const youtubeMutation = useMutation({ mutationFn: convertYoutubeUrl });
   const deleteMutation = useMutation({ mutationFn: deleteTrack });
+  const renameMutation = useMutation({ mutationFn: updateTrackTitle });
 
   const uploadFile = useCallback(
     async (file: File) => {
@@ -141,11 +143,67 @@ export function useLibraryState({
     [deleteMutation, queryClient, tracksQuery.data]
   );
 
+  const renameTrackInLibrary = useCallback(
+    async ({
+      title,
+      trackId
+    }: {
+      title: string;
+      trackId: string;
+    }) => {
+      const nextTitle = title.trim();
+      const track = tracksQuery.data?.find(
+        (libraryTrack) => libraryTrack.id === trackId
+      );
+
+      if (!nextTitle) {
+        setNotice({
+          loadState: "error",
+          message: "表示名を入力してください。"
+        });
+        return false;
+      }
+
+      if (track?.title === nextTitle) {
+        return true;
+      }
+
+      setNotice({
+        loadState: "loading",
+        message: `${nextTitle} を保存しています。`
+      });
+
+      try {
+        const updatedTrack = await renameMutation.mutateAsync({
+          title: nextTitle,
+          trackId
+        });
+
+        cacheTrack(queryClient, updatedTrack);
+        setNotice({
+          loadState: "ready",
+          message: `${updatedTrack.title} に変更しました。`
+        });
+
+        return true;
+      } catch (error) {
+        setNotice({
+          loadState: "error",
+          message: getErrorMessage(error, "表示名を保存できませんでした。")
+        });
+
+        return false;
+      }
+    },
+    [queryClient, renameMutation, tracksQuery.data]
+  );
+
   const refreshTracks = useCallback(() => {
     void tracksQuery.refetch();
   }, [tracksQuery]);
 
   const isMutating =
+    renameMutation.isPending ||
     uploadMutation.isPending ||
     youtubeMutation.isPending ||
     deleteMutation.isPending;
@@ -169,9 +227,13 @@ export function useLibraryState({
       deleteTrackFromLibrary,
       isConverting: youtubeMutation.isPending,
       isLibraryLoading: tracksQuery.isFetching,
+      isRenamingTrackId: renameMutation.isPending
+        ? (renameMutation.variables?.trackId ?? null)
+        : null,
       isUploading: uploadMutation.isPending,
       loadState,
       message,
+      renameTrackInLibrary,
       refreshTracks,
       tracks: tracksQuery.data ?? [],
       uploadFile
@@ -181,6 +243,9 @@ export function useLibraryState({
       deleteTrackFromLibrary,
       loadState,
       message,
+      renameMutation.isPending,
+      renameMutation.variables,
+      renameTrackInLibrary,
       refreshTracks,
       tracksQuery.data,
       tracksQuery.isFetching,
