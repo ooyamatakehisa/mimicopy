@@ -1,7 +1,25 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
-import { getYoutubeVideoId, youtubeDownloadPlans } from "./index.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { createApp, getYoutubeVideoId, youtubeDownloadPlans } from "./index.js";
+
+const tempDirs: string[] = [];
+
+async function createTempStorageDir() {
+  const storageDir = await mkdtemp(path.join(tmpdir(), "mimicopy-"));
+  tempDirs.push(storageDir);
+
+  return storageDir;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((directory) => rm(directory, { force: true, recursive: true }))
+  );
+});
 
 describe("getYoutubeVideoId", () => {
   it("extracts the video id from playlist-backed watch URLs", () => {
@@ -62,5 +80,80 @@ describe("youtubeDownloadPlans", () => {
         options: { format: "mp4", quality: "best", type: "video+audio" }
       }
     ]);
+  });
+});
+
+describe("beat grid API", () => {
+  it("analyzes a stored track with the configured beat analyzer", async () => {
+    const storageDir = await createTempStorageDir();
+    const app = createApp({
+      analyzeBeats: async (audioPath) => {
+        expect(path.basename(audioPath)).toMatch(/\.mp3$/);
+
+        return {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.5 },
+            { isDownbeat: false, position: 2, time: 1 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.5],
+          source: "madmom"
+        };
+      },
+      storageDir
+    });
+    const server = app.listen(0);
+
+    try {
+      const address = server.address();
+
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a port.");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const uploadResponse = await fetch(`${baseUrl}/api/tracks`, {
+        body: new Uint8Array([1, 2, 3]),
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "X-File-Name": "phrase.mp3"
+        },
+        method: "POST"
+      });
+      const uploadBody = (await uploadResponse.json()) as {
+        track: { id: string };
+      };
+      const analysisResponse = await fetch(
+        `${baseUrl}/api/tracks/${uploadBody.track.id}/beat-grid`,
+        {
+          method: "POST"
+        }
+      );
+
+      await expect(analysisResponse.json()).resolves.toEqual({
+        beatGrid: {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.5 },
+            { isDownbeat: false, position: 2, time: 1 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.5],
+          source: "madmom"
+        }
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
   });
 });

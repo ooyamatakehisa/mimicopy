@@ -118,6 +118,22 @@ describe("App", () => {
           return Response.json({ track });
         }
 
+        if (url === "/api/tracks/track-1/beat-grid" && method === "POST") {
+          return Response.json({
+            beatGrid: {
+              analyzedAt: "2026-07-20T00:00:00.000Z",
+              beats: [
+                { isDownbeat: true, position: 1, time: 0.5 },
+                { isDownbeat: false, position: 2, time: 1 },
+                { isDownbeat: false, position: 3, time: 1.5 }
+              ],
+              beatsPerBar: [4],
+              downbeats: [0.5],
+              source: "madmom"
+            }
+          });
+        }
+
         if (url === "/media/track-1.mp3") {
           return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
         }
@@ -340,6 +356,37 @@ describe("App", () => {
 
     fireEvent.click(screen.getByTitle("波形を縮小"));
     expect(within(zoomControls).getByText("1x")).toBeVisible();
+  });
+
+  it("analyzes beats and toggles the click track", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
+    const clickTrackControls = screen.getByLabelText("Click track");
+    const clickButton = screen.getByTitle("クリック音をオン/オフ");
+
+    expect(clickButton).toBeDisabled();
+    expect(within(clickTrackControls).getByText("No beat grid")).toBeVisible();
+
+    fireEvent.click(screen.getByTitle("madmomでbeat/downbeatを解析"));
+
+    await waitFor(() => {
+      expect(
+        within(clickTrackControls).getByText("3 beats / 1 downbeats")
+      ).toBeVisible();
+    });
+
+    expect(clickButton).not.toBeDisabled();
+    fireEvent.click(clickButton);
+    expect(clickButton).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(clickButton);
+    expect(clickButton).toHaveAttribute("aria-pressed", "false");
   });
 
   it("loads an mp3 and adds a marker from an arbitrary time", async () => {

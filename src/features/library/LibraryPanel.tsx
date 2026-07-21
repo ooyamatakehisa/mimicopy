@@ -158,11 +158,14 @@ function LibraryTrackRow({
 
   return (
     <div
+      aria-label={`${track.title} library track`}
       className={cn(
         "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center overflow-hidden rounded-[1.75rem] border border-white/8 bg-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight [&+&]:mt-3",
         track.id === activeTrackId &&
           "border-teal/45 bg-teal/12 shadow-[0_18px_44px_rgba(67,224,202,0.1)]"
       )}
+      data-testid={`library-track-${track.id}`}
+      role="group"
     >
       <IconButton
         className="m-2"

@@ -8,6 +8,8 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
 import {
+  analyzeTrackBeatGrid,
+  beatGridQueryKey,
   decodedTrackQueryKey,
   fetchMediaArrayBuffer,
   fetchTrack,
@@ -15,6 +17,7 @@ import {
   updateTrackTitle
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
+import type { BeatGrid } from "../../lib/beats";
 import type { TrackDetail } from "../../lib/library";
 import { formatTime } from "../../lib/playback";
 import { cacheTrack } from "../../lib/trackQueryCache";
@@ -23,6 +26,7 @@ import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
+import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
 import { useWaveformViewport } from "./useWaveformViewport";
@@ -158,6 +162,12 @@ function TrackEditor({
       cacheTrack(queryClient, updatedTrack);
     }
   });
+  const beatGridMutation = useMutation({
+    mutationFn: analyzeTrackBeatGrid,
+    onSuccess: (beatGrid) => {
+      queryClient.setQueryData(beatGridQueryKey(track.id), beatGrid);
+    }
+  });
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
     trackDuration: track.duration,
@@ -171,14 +181,25 @@ function TrackEditor({
     currentTime: playback.currentTime,
     duration: playback.duration
   });
+  const cachedBeatGrid =
+    queryClient.getQueryData<BeatGrid>(beatGridQueryKey(track.id)) ?? null;
+  const beatGrid = beatGridMutation.data ?? cachedBeatGrid;
+  const clickTrack = useClickTrack({ beatGrid, playback });
+  const beatGridErrorMessage = beatGridMutation.isError
+    ? getErrorMessage(beatGridMutation.error, "拍解析に失敗しました。")
+    : null;
   const message =
     playback.playbackError ??
     markers.markerSaveErrorMessage ??
+    beatGridErrorMessage ??
+    clickTrack.clickErrorMessage ??
     playback.durationErrorMessage ??
     `${track.title} を読み込みました。`;
   const loadState =
     playback.playbackError ||
     markers.markerSaveErrorMessage ||
+    beatGridErrorMessage ||
+    clickTrack.clickErrorMessage ||
     playback.durationErrorMessage
       ? "error"
       : "ready";
@@ -208,6 +229,11 @@ function TrackEditor({
     } catch {
       return false;
     }
+  };
+
+  const analyzeBeatGrid = () => {
+    clickTrack.resetScheduledBeats();
+    beatGridMutation.mutate(track.id);
   };
 
   return (
@@ -247,6 +273,7 @@ function TrackEditor({
 
         <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:grid-cols-1">
           <WaveformPanel
+            beatGrid={beatGrid}
             currentTime={playback.currentTime}
             duration={playback.duration}
             loadState={loadState}
@@ -266,6 +293,11 @@ function TrackEditor({
       </Surface>
 
       <TransportControls
+        beatGrid={beatGrid}
+        beatGridErrorMessage={beatGridErrorMessage}
+        clickTrack={clickTrack}
+        isAnalyzingBeatGrid={beatGridMutation.isPending}
+        onAnalyzeBeatGrid={analyzeBeatGrid}
         markers={markers}
         playback={playback}
         waveform={waveform}

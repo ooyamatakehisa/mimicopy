@@ -1,4 +1,5 @@
 import type { Marker } from "./markers";
+import { parseBeatGridResponse } from "./beats";
 import {
   getErrorMessage,
   parseTrackListResponse,
@@ -13,6 +14,10 @@ export function trackQueryKey(trackId: string) {
 
 export function decodedTrackQueryKey(trackId: string, mediaUrl: string) {
   return ["track", trackId, "decoded", mediaUrl] as const;
+}
+
+export function beatGridQueryKey(trackId: string) {
+  return ["track", trackId, "beat-grid"] as const;
 }
 
 async function parseJsonResponse(response: Response, fallback: string) {
@@ -148,6 +153,18 @@ export async function deleteTrack(trackId: string) {
   });
 
   await parseJsonResponse(response, "保存済みMP3を削除できませんでした。");
+}
+
+export async function analyzeTrackBeatGrid(trackId: string) {
+  const response = await fetch(
+    `/api/tracks/${encodeURIComponent(trackId)}/beat-grid`,
+    {
+      method: "POST"
+    }
+  );
+  const body = await parseJsonResponse(response, "拍解析に失敗しました。");
+
+  return parseBeatGridResponse(body);
 }
 
 export async function fetchMediaArrayBuffer(

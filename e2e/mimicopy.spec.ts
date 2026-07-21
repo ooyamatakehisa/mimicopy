@@ -195,6 +195,38 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
+  await page.route("**/api/tracks/*/beat-grid", async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({
+        beatGrid: {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.25 },
+            { isDownbeat: false, position: 2, time: 0.5 },
+            { isDownbeat: false, position: 3, time: 0.75 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.25],
+          source: "madmom"
+        }
+      }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+
+  const clickTrackControls = page.getByLabel("Click track");
+  const clickToggle = page.getByTitle("クリック音をオン/オフ");
+
+  await expect(clickTrackControls).toContainText("No beat grid");
+  await expect(clickToggle).toBeDisabled();
+  await page.getByTitle("madmomでbeat/downbeatを解析").click();
+  await expect(clickTrackControls).toContainText("3 beats / 1 downbeats");
+  await expect(clickToggle).toBeEnabled();
+  await clickToggle.click();
+  await expect(clickToggle).toHaveAttribute("aria-pressed", "true");
+  await clickToggle.click();
+  await expect(clickToggle).toHaveAttribute("aria-pressed", "false");
 
   await page.getByTitle("再生").click();
   await expect(page.getByTitle("停止")).toBeVisible();
@@ -265,15 +297,18 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");
-  await expect(library).toContainText("Detail practice");
-  await library.getByTitle("表示名を編集").click();
-  await library.getByLabel("Detail practice display name").fill("Practice loop");
-  await library.getByTitle("表示名を保存").click();
-  await expect(library).toContainText("Practice loop");
+  const uploadedTrackRow = library.getByTestId(`library-track-${trackId}`);
+  await expect(uploadedTrackRow).toContainText("Detail practice");
+  await uploadedTrackRow.getByTitle("表示名を編集").click();
+  await uploadedTrackRow
+    .getByLabel("Detail practice display name")
+    .fill("Practice loop");
+  await uploadedTrackRow.getByTitle("表示名を保存").click();
+  await expect(uploadedTrackRow).toContainText("Practice loop");
 
   page.once("dialog", (dialog) => dialog.accept());
-  await library.getByTitle("保存済みMP3を削除").click();
-  await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+  await uploadedTrackRow.getByTitle("保存済みMP3を削除").click();
+  await expect(library.getByTestId(`library-track-${trackId}`)).toHaveCount(0);
 });
 
 test("converts a YouTube URL through the UI", async ({ page }) => {

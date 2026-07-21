@@ -9,6 +9,10 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
+  runMadmomBeatAnalysis,
+  type BeatGrid
+} from "./beatAnalysis.js";
+import {
   createLibraryStore,
   type LibraryMarker,
   type LibraryTrack,
@@ -70,7 +74,16 @@ type TrackDeleteResponseBody =
       error: string;
     };
 
+type BeatGridResponseBody =
+  | {
+      beatGrid: BeatGrid;
+    }
+  | {
+      error: string;
+    };
+
 type CreateAppOptions = {
+  analyzeBeats?: (audioPath: string) => Promise<BeatGrid>;
   storageDir?: string;
 };
 
@@ -441,6 +454,7 @@ export function createApp(options: CreateAppOptions = {}) {
     path.resolve(process.cwd(), "storage");
   const paths = getStoragePaths(storageDir);
   const store = createLibraryStore(paths);
+  const analyzeBeats = options.analyzeBeats ?? runMadmomBeatAnalysis;
 
   app.use(express.json({ limit: "1mb" }));
   app.use("/media", express.static(paths.mediaDir, { maxAge: "1h" }));
@@ -581,6 +595,31 @@ export function createApp(options: CreateAppOptions = {}) {
         response.json({ track });
       } catch (error) {
         sendError(response, error, "Could not save the markers.");
+      }
+    }
+  );
+
+  app.post(
+    "/api/tracks/:trackId/beat-grid",
+    async (
+      request: Request<{ trackId: string }>,
+      response: Response<BeatGridResponseBody>
+    ) => {
+      try {
+        const mediaFilename = store.getMediaFilename(getTrackId(request));
+
+        if (!mediaFilename) {
+          response.status(404).json({ error: "Track was not found." });
+          return;
+        }
+
+        const beatGrid = await analyzeBeats(
+          path.join(paths.mediaDir, mediaFilename)
+        );
+
+        response.json({ beatGrid });
+      } catch (error) {
+        sendError(response, error, "Could not analyze the beat grid.");
       }
     }
   );
