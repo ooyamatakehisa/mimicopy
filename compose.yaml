@@ -1,0 +1,14 @@
+services:
+  mimicopy:
+    image: ghcr.io/ooyamatakehisa/mimicopy:${MIMICOPY_IMAGE_TAG:-main}
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:${MIMICOPY_HOST_PORT:-5174}:5174"
+    environment:
+      MIMICOPY_STORAGE_DIR: /data
+      NODE_ENV: production
+      PORT: 5174
+    volumes:
+      - ${MIMICOPY_STORAGE_PATH:-./storage}:/data
+    restart: unless-stopped

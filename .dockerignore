@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-server
+coverage
+.vite
+.playwright-storage
+playwright-report
+test-results
+storage
+.git
+.env
+.env.*
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
