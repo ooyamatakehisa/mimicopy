@@ -7,6 +7,11 @@ coverage
 playwright-report
 test-results
 storage
+__pycache__
+.mypy_cache
+.pytest_cache
+.venv
+venv
 .git
 .env
 .env.*
