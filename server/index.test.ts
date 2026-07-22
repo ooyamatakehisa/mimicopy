@@ -157,7 +157,7 @@ describe("beat grid API", () => {
     }
   });
 
-  it("analyzes a temporary YouTube click source without adding it to the library", async () => {
+  it("saves a temporary YouTube click analysis for its track", async () => {
     const storageDir = await createTempStorageDir();
     const convertedPaths: string[] = [];
     const app = createApp({
@@ -194,7 +194,19 @@ describe("beat grid API", () => {
       }
 
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      const analysisResponse = await fetch(`${baseUrl}/api/beat-grid/youtube`, {
+      const uploadResponse = await fetch(`${baseUrl}/api/tracks`, {
+        body: new Uint8Array([1, 2, 3]),
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "X-File-Name": "phrase.mp3"
+        },
+        method: "POST"
+      });
+      const uploadBody = (await uploadResponse.json()) as {
+        track: { id: string };
+      };
+      const beatGridUrl = `${baseUrl}/api/tracks/${uploadBody.track.id}/beat-grid`;
+      const analysisResponse = await fetch(`${beatGridUrl}/youtube`, {
         body: JSON.stringify({
           url: "https://www.youtube.com/watch?v=DFRdswY-WHU&list=RDDFRdswY-WHU"
         }),
@@ -216,12 +228,28 @@ describe("beat grid API", () => {
         reference: {
           duration: 12,
           sourceType: "youtube",
-          title: "Reference groove"
+          title: "Reference groove",
+          url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
         }
       });
-      await expect(
-        fetch(`${baseUrl}/api/tracks`).then((response) => response.json())
-      ).resolves.toEqual({ tracks: [] });
+      await expect(fetch(beatGridUrl).then((response) => response.json())).resolves.toEqual({
+        beatGrid: {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.25 },
+            { isDownbeat: false, position: 2, time: 0.75 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.25],
+          source: "madmom"
+        },
+        reference: {
+          duration: 12,
+          sourceType: "youtube",
+          title: "Reference groove",
+          url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
+        }
+      });
       await expect(access(convertedPaths[0] ?? "")).rejects.toThrow();
     } finally {
       await new Promise<void>((resolve, reject) => {

@@ -16,6 +16,12 @@ export type BeatGridReference = {
   duration: number;
   sourceType: "youtube";
   title: string;
+  url: string;
+};
+
+export type YoutubeBeatGridAnalysis = {
+  beatGrid: BeatGrid;
+  reference: BeatGridReference;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,12 +116,14 @@ function parseBeatGridReference(value: unknown): BeatGridReference | null {
   const duration = readNumber(value, "duration");
   const sourceType = readString(value, "sourceType");
   const title = readString(value, "title");
+  const url = readString(value, "url");
 
   if (
     duration === null ||
     duration < 0 ||
     sourceType !== "youtube" ||
-    !title
+    !title ||
+    !url
   ) {
     return null;
   }
@@ -123,7 +131,8 @@ function parseBeatGridReference(value: unknown): BeatGridReference | null {
   return {
     duration,
     sourceType,
-    title
+    title,
+    url
   };
 }
 
@@ -154,4 +163,16 @@ export function parseYoutubeBeatGridResponse(value: unknown) {
   }
 
   return { beatGrid, reference };
+}
+
+export function parseSavedYoutubeBeatGridResponse(value: unknown) {
+  if (
+    isRecord(value) &&
+    value.beatGrid === null &&
+    value.reference === null
+  ) {
+    return null;
+  }
+
+  return parseYoutubeBeatGridResponse(value);
 }

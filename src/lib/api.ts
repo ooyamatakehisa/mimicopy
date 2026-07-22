@@ -1,6 +1,7 @@
 import type { Marker } from "./markers";
 import {
   parseBeatGridResponse,
+  parseSavedYoutubeBeatGridResponse,
   parseYoutubeBeatGridResponse
 } from "./beats";
 import {
@@ -170,12 +171,33 @@ export async function analyzeTrackBeatGrid(trackId: string) {
   return parseBeatGridResponse(body);
 }
 
-export async function analyzeYoutubeBeatGrid(url: string) {
-  const response = await fetch("/api/beat-grid/youtube", {
+export async function fetchSavedBeatGrid(trackId: string) {
+  const response = await fetch(
+    `/api/tracks/${encodeURIComponent(trackId)}/beat-grid`
+  );
+  const body = await parseJsonResponse(
+    response,
+    "保存済みの拍解析結果を読み込めませんでした。"
+  );
+
+  return parseSavedYoutubeBeatGridResponse(body);
+}
+
+export async function analyzeYoutubeBeatGrid({
+  trackId,
+  url
+}: {
+  trackId: string;
+  url: string;
+}) {
+  const response = await fetch(
+    `/api/tracks/${encodeURIComponent(trackId)}/beat-grid/youtube`,
+    {
     body: JSON.stringify({ url }),
     headers: { "Content-Type": "application/json" },
     method: "POST"
-  });
+    }
+  );
   const body = await parseJsonResponse(response, "拍解析に失敗しました。");
 
   return parseYoutubeBeatGridResponse(body);

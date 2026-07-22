@@ -48,37 +48,76 @@ function scheduleClick({
   gain.connect(audioContext.destination);
   oscillator.start(startAt);
   oscillator.stop(startAt + duration + 0.01);
+
+  return oscillator;
 }
 
 export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
   const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const lastMediaTimeRef = useRef(0);
   const scheduledBeatKeysRef = useRef(new Set<string>());
+  const scheduledOscillatorsRef = useRef(new Map<string, OscillatorNode>());
   const [isClickEnabled, setIsClickEnabled] = useState(false);
   const [clickErrorMessage, setClickErrorMessage] = useState<string | null>(
     null
   );
   const beats = beatGrid?.beats ?? [];
-  const resetScheduledBeats = useCallback(() => {
-    scheduledBeatKeysRef.current.clear();
-    lastMediaTimeRef.current = playback.currentTime;
-  }, [playback.currentTime]);
-  const ensureAudioContext = useCallback(() => {
-    if (audioContextRef.current) {
-      return audioContextRef.current;
+  const cancelScheduledClicks = useCallback(() => {
+    for (const [beatKey, oscillator] of scheduledOscillatorsRef.current) {
+      oscillator.onended = null;
+
+      try {
+        oscillator.stop();
+      } catch {
+        // The oscillator may already have ended between scheduler ticks.
+      }
+
+      scheduledBeatKeysRef.current.delete(beatKey);
     }
 
-    const AudioContextCtor = getAudioContextConstructor();
+    scheduledOscillatorsRef.current.clear();
+  }, []);
+  const resetScheduledBeats = useCallback(() => {
+    cancelScheduledClicks();
+    scheduledBeatKeysRef.current.clear();
+    lastMediaTimeRef.current = playback.currentTime;
+  }, [cancelScheduledClicks, playback.currentTime]);
+  const ensureAudioContext = useCallback(() => {
+    const audio = playback.audioRef.current;
 
-    if (!AudioContextCtor) {
-      setClickErrorMessage("このブラウザではクリック音を生成できません。");
+    if (!audio) {
       return null;
     }
 
-    audioContextRef.current = new AudioContextCtor();
+    let audioContext = audioContextRef.current;
 
-    return audioContextRef.current;
-  }, []);
+    if (!audioContext) {
+      const AudioContextCtor = getAudioContextConstructor();
+
+      if (!AudioContextCtor) {
+        setClickErrorMessage("このブラウザではクリック音を生成できません。");
+        return null;
+      }
+
+      audioContext = new AudioContextCtor();
+      audioContextRef.current = audioContext;
+    }
+
+    if (!mediaSourceRef.current) {
+      try {
+        const mediaSource = audioContext.createMediaElementSource(audio);
+
+        mediaSource.connect(audioContext.destination);
+        mediaSourceRef.current = mediaSource;
+      } catch {
+        setClickErrorMessage("曲とクリック音を同期できませんでした。");
+        return null;
+      }
+    }
+
+    return audioContext;
+  }, [playback.audioRef]);
   const toggleClickTrack = useCallback(() => {
     setClickErrorMessage(null);
 
@@ -102,15 +141,19 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
 
   useEffect(() => {
     setIsClickEnabled(false);
+    cancelScheduledClicks();
     scheduledBeatKeysRef.current.clear();
-  }, [beatGrid]);
+  }, [beatGrid, cancelScheduledClicks]);
 
   useEffect(() => {
     return () => {
+      cancelScheduledClicks();
+      mediaSourceRef.current?.disconnect();
+      mediaSourceRef.current = null;
       void audioContextRef.current?.close();
       audioContextRef.current = null;
     };
-  }, []);
+  }, [cancelScheduledClicks]);
 
   useEffect(() => {
     if (!isClickEnabled || !playback.isPlaying || beats.length === 0) {
@@ -136,6 +179,7 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
         currentTime < lastTime ||
         Math.abs(currentTime - lastTime) > SEEK_RESET_THRESHOLD_SECONDS
       ) {
+        cancelScheduledClicks();
         scheduledBeatKeysRef.current.clear();
       }
 
@@ -156,13 +200,17 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
         }
 
         scheduledBeatKeysRef.current.add(beatKey);
-        scheduleClick({
+        const oscillator = scheduleClick({
           audioContext,
           beat,
           startAt:
             audioContext.currentTime +
             Math.max(0, beat.time - currentTime) / playback.playbackRate
         });
+        scheduledOscillatorsRef.current.set(beatKey, oscillator);
+        oscillator.onended = () => {
+          scheduledOscillatorsRef.current.delete(beatKey);
+        };
       }
     };
 
@@ -174,9 +222,11 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
 
     return () => {
       window.clearInterval(intervalId);
+      cancelScheduledClicks();
     };
   }, [
     beats,
+    cancelScheduledClicks,
     ensureAudioContext,
     isClickEnabled,
     playback.audioRef,

@@ -9,14 +9,15 @@ import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
 import {
   analyzeYoutubeBeatGrid,
+  beatGridQueryKey,
   decodedTrackQueryKey,
   fetchMediaArrayBuffer,
+  fetchSavedBeatGrid,
   fetchTrack,
   trackQueryKey,
   updateTrackTitle
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
-import type { BeatGrid } from "../../lib/beats";
 import type { TrackDetail } from "../../lib/library";
 import { formatTime } from "../../lib/playback";
 import { cacheTrack } from "../../lib/trackQueryCache";
@@ -161,22 +162,33 @@ function TrackEditor({
       cacheTrack(queryClient, updatedTrack);
     }
   });
-  const [beatGrid, setBeatGrid] = useState<BeatGrid | null>(null);
-  const [beatReferenceTitle, setBeatReferenceTitle] = useState<string | null>(
-    null
-  );
   const [beatGridInputErrorMessage, setBeatGridInputErrorMessage] = useState<
     string | null
   >(null);
   const [beatReferenceUrl, setBeatReferenceUrl] = useState("");
+  const beatGridQuery = useQuery({
+    queryFn: () => fetchSavedBeatGrid(track.id),
+    queryKey: beatGridQueryKey(track.id)
+  });
   const beatGridMutation = useMutation({
-    mutationFn: analyzeYoutubeBeatGrid,
-    onSuccess: ({ beatGrid: analyzedBeatGrid, reference }) => {
-      setBeatGrid(analyzedBeatGrid);
-      setBeatReferenceTitle(reference.title);
-      setBeatReferenceUrl("");
+    mutationFn: (url: string) =>
+      analyzeYoutubeBeatGrid({ trackId: track.id, url }),
+    onSuccess: (analysis) => {
+      queryClient.setQueryData(beatGridQueryKey(track.id), analysis);
+      setBeatReferenceUrl(analysis.reference.url);
     }
   });
+  const beatGrid = beatGridQuery.data?.beatGrid ?? null;
+  const beatReferenceTitle = beatGridQuery.data?.reference.title ?? null;
+  const savedBeatReferenceUrl = beatGridQuery.data?.reference.url ?? "";
+
+  useEffect(() => {
+    if (!savedBeatReferenceUrl) {
+      return;
+    }
+
+    setBeatReferenceUrl((currentUrl) => currentUrl || savedBeatReferenceUrl);
+  }, [savedBeatReferenceUrl]);
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
     trackDuration: track.duration,
@@ -195,7 +207,12 @@ function TrackEditor({
     beatGridInputErrorMessage ??
     (beatGridMutation.isError
       ? getErrorMessage(beatGridMutation.error, "拍解析に失敗しました。")
-      : null);
+      : beatGridQuery.isError
+        ? getErrorMessage(
+            beatGridQuery.error,
+            "保存済みの拍解析結果を読み込めませんでした。"
+          )
+        : null);
   const message =
     playback.playbackError ??
     markers.markerSaveErrorMessage ??
@@ -244,8 +261,6 @@ function TrackEditor({
 
     setBeatGridInputErrorMessage(null);
     clickTrack.resetScheduledBeats();
-    setBeatGrid(null);
-    setBeatReferenceTitle(null);
 
     if (!trimmedUrl) {
       setBeatGridInputErrorMessage("クリック用のYouTube URLを入力してください。");
@@ -318,6 +333,7 @@ function TrackEditor({
         beatReferenceUrl={beatReferenceUrl}
         clickTrack={clickTrack}
         isAnalyzingBeatGrid={beatGridMutation.isPending}
+        isLoadingBeatGrid={beatGridQuery.isLoading}
         onBeatReferenceUrlChange={setBeatReferenceUrl}
         onAnalyzeBeatGrid={analyzeBeatGrid}
         markers={markers}

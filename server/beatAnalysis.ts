@@ -110,6 +110,47 @@ export function parseMadmomBeatGrid(value: unknown): BeatGrid {
   };
 }
 
+export function parseStoredBeatGrid(value: unknown): BeatGrid {
+  if (
+    !isRecord(value) ||
+    typeof value.analyzedAt !== "string" ||
+    value.analyzedAt.length === 0 ||
+    value.source !== "madmom" ||
+    !Array.isArray(value.beats) ||
+    !Array.isArray(value.beatsPerBar)
+  ) {
+    throw new Error("Stored beat grid is invalid.");
+  }
+
+  const beats = value.beats.map(parseBeatPoint);
+  const beatsPerBar = value.beatsPerBar.filter(
+    (candidate): candidate is number =>
+      Number.isInteger(candidate) && candidate > 0 && candidate <= 16
+  );
+
+  if (
+    beats.some((beat) => beat === null) ||
+    beatsPerBar.length !== value.beatsPerBar.length ||
+    beatsPerBar.length === 0
+  ) {
+    throw new Error("Stored beat grid is invalid.");
+  }
+
+  const sortedBeats = (beats as BeatPoint[]).sort((left, right) => {
+    return left.time - right.time;
+  });
+
+  return {
+    analyzedAt: value.analyzedAt,
+    beats: sortedBeats,
+    beatsPerBar,
+    downbeats: sortedBeats
+      .filter((beat) => beat.isDownbeat)
+      .map((beat) => beat.time),
+    source: "madmom"
+  };
+}
+
 export async function runMadmomBeatAnalysis(
   audioPath: string,
   options: MadmomAnalysisOptions = {}

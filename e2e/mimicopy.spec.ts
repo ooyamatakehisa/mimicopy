@@ -195,26 +195,39 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
-  await page.route("**/api/beat-grid/youtube", async (route) => {
+  let savedClickTrack: Record<string, unknown> | null = null;
+
+  await page.route("**/api/tracks/*/beat-grid", async (route) => {
     await route.fulfill({
-      body: JSON.stringify({
-        beatGrid: {
-          analyzedAt: "2026-07-20T00:00:00.000Z",
-          beats: [
-            { isDownbeat: true, position: 1, time: 0.25 },
-            { isDownbeat: false, position: 2, time: 0.5 },
-            { isDownbeat: false, position: 3, time: 0.75 }
-          ],
-          beatsPerBar: [4],
-          downbeats: [0.25],
-          source: "madmom"
-        },
-        reference: {
-          duration: 1,
-          sourceType: "youtube",
-          title: "Reference groove"
-        }
-      }),
+      body: JSON.stringify(
+        savedClickTrack ?? { beatGrid: null, reference: null }
+      ),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+  await page.route("**/api/tracks/*/beat-grid/youtube", async (route) => {
+    savedClickTrack = {
+      beatGrid: {
+        analyzedAt: "2026-07-20T00:00:00.000Z",
+        beats: [
+          { isDownbeat: true, position: 1, time: 0.25 },
+          { isDownbeat: false, position: 2, time: 0.5 },
+          { isDownbeat: false, position: 3, time: 0.75 }
+        ],
+        beatsPerBar: [4],
+        downbeats: [0.25],
+        source: "madmom"
+      },
+      reference: {
+        duration: 1,
+        sourceType: "youtube",
+        title: "Reference groove",
+        url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
+      }
+    };
+    await route.fulfill({
+      body: JSON.stringify(savedClickTrack),
       contentType: "application/json",
       status: 200
     });
@@ -302,6 +315,12 @@ test("loads audio and supports the main playback and marker workflow", async ({
   expect(trackId).toBeTruthy();
   await page.goto(`/tracks/${trackId}`);
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Click track")).toContainText(
+    "3 beats / 1 downbeats"
+  );
+  await expect(page.getByLabel("Click source YouTube URL")).toHaveValue(
+    "https://www.youtube.com/watch?v=DFRdswY-WHU"
+  );
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");

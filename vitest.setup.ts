@@ -17,6 +17,10 @@ const audioBuffer = {
 class AudioContextMock {
   currentTime = 0;
   destination = {};
+  createMediaElementSource = vi.fn(() => ({
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  }));
   createGain = vi.fn(() => ({
     connect: vi.fn(),
     gain: {

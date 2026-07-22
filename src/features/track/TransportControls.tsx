@@ -27,6 +27,7 @@ type TransportControlsProps = {
   beatReferenceUrl: string;
   clickTrack: ClickTrackState;
   isAnalyzingBeatGrid: boolean;
+  isLoadingBeatGrid: boolean;
   markers: MarkersState;
   onAnalyzeBeatGrid: (youtubeUrl: string) => void;
   onBeatReferenceUrlChange: (youtubeUrl: string) => void;
@@ -41,6 +42,7 @@ export function TransportControls({
   beatReferenceUrl,
   clickTrack,
   isAnalyzingBeatGrid,
+  isLoadingBeatGrid,
   markers,
   onAnalyzeBeatGrid,
   onBeatReferenceUrlChange,
@@ -138,7 +140,9 @@ export function TransportControls({
         <IconButton
           type="submit"
           title="クリック用YouTubeを解析"
-          disabled={isAnalyzingBeatGrid || !trimmedBeatReferenceUrl}
+          disabled={
+            isAnalyzingBeatGrid || isLoadingBeatGrid || !trimmedBeatReferenceUrl
+          }
         >
           <RefreshCw
             className={isAnalyzingBeatGrid ? "animate-spin" : undefined}
@@ -151,14 +155,18 @@ export function TransportControls({
           variant={clickTrack.isClickEnabled ? "accent" : "secondary"}
           title="クリック音をオン/オフ"
           aria-pressed={clickTrack.isClickEnabled}
-          disabled={!beatGrid || isAnalyzingBeatGrid}
+          disabled={!beatGrid || isAnalyzingBeatGrid || isLoadingBeatGrid}
           onClick={clickTrack.toggleClickTrack}
         >
           {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           <span>Click</span>
         </Button>
         <strong className="min-w-32 max-w-48 truncate text-center text-xs font-semibold text-muted">
-          {isAnalyzingBeatGrid ? "Analyzing..." : beatStatus}
+          {isAnalyzingBeatGrid
+            ? "Analyzing..."
+            : isLoadingBeatGrid
+              ? "Loading..."
+              : beatStatus}
         </strong>
       </form>
 
