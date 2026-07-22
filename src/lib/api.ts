@@ -1,5 +1,8 @@
 import type { Marker } from "./markers";
-import { parseBeatGridResponse } from "./beats";
+import {
+  parseBeatGridResponse,
+  parseYoutubeBeatGridResponse
+} from "./beats";
 import {
   getErrorMessage,
   parseTrackListResponse,
@@ -165,6 +168,17 @@ export async function analyzeTrackBeatGrid(trackId: string) {
   const body = await parseJsonResponse(response, "拍解析に失敗しました。");
 
   return parseBeatGridResponse(body);
+}
+
+export async function analyzeYoutubeBeatGrid(url: string) {
+  const response = await fetch("/api/beat-grid/youtube", {
+    body: JSON.stringify({ url }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST"
+  });
+  const body = await parseJsonResponse(response, "拍解析に失敗しました。");
+
+  return parseYoutubeBeatGridResponse(body);
 }
 
 export async function fetchMediaArrayBuffer(

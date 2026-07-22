@@ -118,7 +118,7 @@ describe("App", () => {
           return Response.json({ track });
         }
 
-        if (url === "/api/tracks/track-1/beat-grid" && method === "POST") {
+        if (url === "/api/beat-grid/youtube" && method === "POST") {
           return Response.json({
             beatGrid: {
               analyzedAt: "2026-07-20T00:00:00.000Z",
@@ -130,6 +130,11 @@ describe("App", () => {
               beatsPerBar: [4],
               downbeats: [0.5],
               source: "madmom"
+            },
+            reference: {
+              duration: 10,
+              sourceType: "youtube",
+              title: "Reference groove"
             }
           });
         }
@@ -368,18 +373,23 @@ describe("App", () => {
     });
 
     const clickTrackControls = screen.getByLabelText("Click track");
+    const clickSourceInput = screen.getByLabelText("Click source YouTube URL");
     const clickButton = screen.getByTitle("クリック音をオン/オフ");
 
     expect(clickButton).toBeDisabled();
     expect(within(clickTrackControls).getByText("No beat grid")).toBeVisible();
 
-    fireEvent.click(screen.getByTitle("madmomでbeat/downbeatを解析"));
+    fireEvent.change(clickSourceInput, {
+      target: { value: "https://www.youtube.com/watch?v=DFRdswY-WHU" }
+    });
+    fireEvent.click(screen.getByTitle("クリック用YouTubeを解析"));
 
     await waitFor(() => {
       expect(
-        within(clickTrackControls).getByText("3 beats / 1 downbeats")
+        within(clickTrackControls).getByText(/3 beats \/ 1 downbeats/)
       ).toBeVisible();
     });
+    expect(within(clickTrackControls).getByText(/Reference groove/)).toBeVisible();
 
     expect(clickButton).not.toBeDisabled();
     fireEvent.click(clickButton);

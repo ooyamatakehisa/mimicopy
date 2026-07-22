@@ -65,9 +65,10 @@ Open the client URL printed by Vite.
 
 ## Beat And Click Track
 
-In the track editor, use the refresh button in the Click track controls to run
-madmom beat/downbeat analysis. Once the beat grid is loaded, toggle `Click` to
-layer synthesized click sounds over playback. Downbeats use the accent click.
+In the track editor, paste a YouTube URL into the Click track controls and use
+the refresh button to run madmom beat/downbeat analysis on that separate audio
+source. Once the beat grid is loaded, toggle `Click` to layer synthesized click
+sounds over the current track playback. Downbeats use the accent click.
 
 ## Verification
 

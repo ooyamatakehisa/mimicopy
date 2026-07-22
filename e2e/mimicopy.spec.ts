@@ -195,7 +195,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
-  await page.route("**/api/tracks/*/beat-grid", async (route) => {
+  await page.route("**/api/beat-grid/youtube", async (route) => {
     await route.fulfill({
       body: JSON.stringify({
         beatGrid: {
@@ -208,6 +208,11 @@ test("loads audio and supports the main playback and marker workflow", async ({
           beatsPerBar: [4],
           downbeats: [0.25],
           source: "madmom"
+        },
+        reference: {
+          duration: 1,
+          sourceType: "youtube",
+          title: "Reference groove"
         }
       }),
       contentType: "application/json",
@@ -216,12 +221,15 @@ test("loads audio and supports the main playback and marker workflow", async ({
   });
 
   const clickTrackControls = page.getByLabel("Click track");
+  const clickSourceInput = page.getByLabel("Click source YouTube URL");
   const clickToggle = page.getByTitle("クリック音をオン/オフ");
 
   await expect(clickTrackControls).toContainText("No beat grid");
   await expect(clickToggle).toBeDisabled();
-  await page.getByTitle("madmomでbeat/downbeatを解析").click();
+  await clickSourceInput.fill("https://www.youtube.com/watch?v=DFRdswY-WHU");
+  await page.getByTitle("クリック用YouTubeを解析").click();
   await expect(clickTrackControls).toContainText("3 beats / 1 downbeats");
+  await expect(clickTrackControls).toContainText("Reference groove");
   await expect(clickToggle).toBeEnabled();
   await clickToggle.click();
   await expect(clickToggle).toHaveAttribute("aria-pressed", "true");

@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -143,6 +143,86 @@ describe("beat grid API", () => {
           source: "madmom"
         }
       });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("analyzes a temporary YouTube click source without adding it to the library", async () => {
+    const storageDir = await createTempStorageDir();
+    const convertedPaths: string[] = [];
+    const app = createApp({
+      analyzeBeats: async (audioPath) => {
+        expect(audioPath).toBe(convertedPaths[0]);
+
+        return {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.25 },
+            { isDownbeat: false, position: 2, time: 0.75 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.25],
+          source: "madmom"
+        };
+      },
+      convertYoutubeAudio: async (videoId, outputPath) => {
+        expect(videoId).toBe("DFRdswY-WHU");
+        convertedPaths.push(outputPath);
+        await writeFile(outputPath, new Uint8Array([1, 2, 3]));
+
+        return { duration: 12, title: "Reference groove" };
+      },
+      storageDir
+    });
+    const server = app.listen(0);
+
+    try {
+      const address = server.address();
+
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a port.");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const analysisResponse = await fetch(`${baseUrl}/api/beat-grid/youtube`, {
+        body: JSON.stringify({
+          url: "https://www.youtube.com/watch?v=DFRdswY-WHU&list=RDDFRdswY-WHU"
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      });
+
+      await expect(analysisResponse.json()).resolves.toEqual({
+        beatGrid: {
+          analyzedAt: "2026-07-20T00:00:00.000Z",
+          beats: [
+            { isDownbeat: true, position: 1, time: 0.25 },
+            { isDownbeat: false, position: 2, time: 0.75 }
+          ],
+          beatsPerBar: [4],
+          downbeats: [0.25],
+          source: "madmom"
+        },
+        reference: {
+          duration: 12,
+          sourceType: "youtube",
+          title: "Reference groove"
+        }
+      });
+      await expect(
+        fetch(`${baseUrl}/api/tracks`).then((response) => response.json())
+      ).resolves.toEqual({ tracks: [] });
+      await expect(access(convertedPaths[0] ?? "")).rejects.toThrow();
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {

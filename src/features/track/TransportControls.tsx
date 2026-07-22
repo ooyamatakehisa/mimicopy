@@ -1,6 +1,7 @@
 import {
   AudioLines,
   Gauge,
+  Link,
   MapPin,
   Pause,
   Play,
@@ -10,6 +11,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
+import { type FormEvent } from "react";
 import { Button, IconButton } from "../../components/ui/Button";
 import { Surface } from "../../components/ui/Surface";
 import type { BeatGrid } from "../../lib/beats";
@@ -21,10 +23,13 @@ import type { WaveformViewportState } from "./useWaveformViewport";
 type TransportControlsProps = {
   beatGrid: BeatGrid | null;
   beatGridErrorMessage: string | null;
+  beatReferenceTitle: string | null;
+  beatReferenceUrl: string;
   clickTrack: ClickTrackState;
   isAnalyzingBeatGrid: boolean;
   markers: MarkersState;
-  onAnalyzeBeatGrid: () => void;
+  onAnalyzeBeatGrid: (youtubeUrl: string) => void;
+  onBeatReferenceUrlChange: (youtubeUrl: string) => void;
   playback: PlaybackState;
   waveform: WaveformViewportState;
 };
@@ -32,21 +37,31 @@ type TransportControlsProps = {
 export function TransportControls({
   beatGrid,
   beatGridErrorMessage,
+  beatReferenceTitle,
+  beatReferenceUrl,
   clickTrack,
   isAnalyzingBeatGrid,
   markers,
   onAnalyzeBeatGrid,
+  onBeatReferenceUrlChange,
   playback,
   waveform
 }: TransportControlsProps) {
+  const trimmedBeatReferenceUrl = beatReferenceUrl.trim();
   const beatStatus = beatGrid
-    ? `${beatGrid.beats.length} beats / ${beatGrid.downbeats.length} downbeats`
+    ? `${beatGrid.beats.length} beats / ${beatGrid.downbeats.length} downbeats${
+        beatReferenceTitle ? ` / ${beatReferenceTitle}` : ""
+      }`
     : beatGridErrorMessage || clickTrack.clickErrorMessage || "No beat grid";
+  const handleBeatGridSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onAnalyzeBeatGrid(beatReferenceUrl);
+  };
 
   return (
     <Surface
       as="footer"
-      className="flex min-h-[76px] items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:flex-col max-lg:items-stretch"
+      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:flex-col max-lg:items-stretch"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Button
@@ -99,15 +114,31 @@ export function TransportControls({
         </Button>
       </div>
 
-      <div
-        className="flex min-w-52 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
+      <form
+        className="flex min-w-[360px] max-w-[680px] flex-1 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:min-w-0 max-lg:justify-start max-sm:flex-wrap max-sm:rounded-[1.5rem]"
         aria-label="Click track"
+        onSubmit={handleBeatGridSubmit}
       >
         <AudioLines className="text-muted" size={18} aria-hidden="true" />
+        <label className="sr-only" htmlFor="click-source-url">
+          Click source YouTube URL
+        </label>
+        <div className="flex h-11 min-w-48 flex-1 items-center gap-2 rounded-full border border-white/8 bg-black/10 px-3 focus-within:border-teal/55 max-sm:min-w-full">
+          <Link className="shrink-0 text-muted" size={16} aria-hidden="true" />
+          <input
+            id="click-source-url"
+            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-quiet"
+            type="url"
+            inputMode="url"
+            placeholder="https://www.youtube.com/watch?v=..."
+            value={beatReferenceUrl}
+            onChange={(event) => onBeatReferenceUrlChange(event.target.value)}
+          />
+        </div>
         <IconButton
-          title="madmomでbeat/downbeatを解析"
-          disabled={isAnalyzingBeatGrid}
-          onClick={onAnalyzeBeatGrid}
+          type="submit"
+          title="クリック用YouTubeを解析"
+          disabled={isAnalyzingBeatGrid || !trimmedBeatReferenceUrl}
         >
           <RefreshCw
             className={isAnalyzingBeatGrid ? "animate-spin" : undefined}
@@ -126,10 +157,10 @@ export function TransportControls({
           {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           <span>Click</span>
         </Button>
-        <strong className="min-w-32 truncate text-center text-xs font-semibold text-muted">
+        <strong className="min-w-32 max-w-48 truncate text-center text-xs font-semibold text-muted">
           {isAnalyzingBeatGrid ? "Analyzing..." : beatStatus}
         </strong>
-      </div>
+      </form>
 
       <div
         className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"

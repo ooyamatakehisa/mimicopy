@@ -2,7 +2,7 @@ import express, { type Request, type Response } from "express";
 import { Innertube, type Types } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -82,8 +82,27 @@ type BeatGridResponseBody =
       error: string;
     };
 
+type YoutubeBeatGridResponseBody =
+  | {
+      beatGrid: BeatGrid;
+      reference: {
+        duration: number;
+        sourceType: "youtube";
+        title: string;
+      };
+    }
+  | {
+      error: string;
+    };
+
+type ConvertYoutubeAudio = (
+  videoId: string,
+  outputPath: string
+) => Promise<{ duration: number; title: string }>;
+
 type CreateAppOptions = {
   analyzeBeats?: (audioPath: string) => Promise<BeatGrid>;
+  convertYoutubeAudio?: ConvertYoutubeAudio;
   storageDir?: string;
 };
 
@@ -186,6 +205,7 @@ function getYoutubeClient() {
 
 function getStoragePaths(storageDir: string) {
   return {
+    beatReferenceDir: path.join(storageDir, "beat-references"),
     databasePath: path.join(storageDir, "library.sqlite"),
     mediaDir: path.join(storageDir, "media")
   };
@@ -455,6 +475,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const paths = getStoragePaths(storageDir);
   const store = createLibraryStore(paths);
   const analyzeBeats = options.analyzeBeats ?? runMadmomBeatAnalysis;
+  const convertYoutubeAudio =
+    options.convertYoutubeAudio ?? convertYoutubeToMp3;
 
   app.use(express.json({ limit: "1mb" }));
   app.use("/media", express.static(paths.mediaDir, { maxAge: "1h" }));
@@ -624,6 +646,41 @@ export function createApp(options: CreateAppOptions = {}) {
     }
   );
 
+  app.post(
+    "/api/beat-grid/youtube",
+    async (
+      request: Request<never, YoutubeBeatGridResponseBody, YoutubeRequestBody>,
+      response: Response<YoutubeBeatGridResponseBody>
+    ) => {
+      let outputPath: string | undefined;
+
+      try {
+        const videoId = getYoutubeVideoId(request.body.url);
+
+        await mkdir(paths.beatReferenceDir, { recursive: true });
+        outputPath = path.join(paths.beatReferenceDir, `${randomUUID()}.mp3`);
+
+        const converted = await convertYoutubeAudio(videoId, outputPath);
+        const beatGrid = await analyzeBeats(outputPath);
+
+        response.json({
+          beatGrid,
+          reference: {
+            duration: converted.duration,
+            sourceType: "youtube",
+            title: converted.title
+          }
+        });
+      } catch (error) {
+        sendError(response, error, "Could not analyze the YouTube beat grid.");
+      } finally {
+        if (outputPath) {
+          await rm(outputPath, { force: true }).catch(() => undefined);
+        }
+      }
+    }
+  );
+
   app.delete(
     "/api/tracks/:trackId",
     async (
@@ -662,7 +719,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
         const fileName = `${randomUUID()}.mp3`;
         outputPath = path.join(paths.mediaDir, fileName);
-        const converted = await convertYoutubeToMp3(videoId, outputPath);
+        const converted = await convertYoutubeAudio(videoId, outputPath);
         const track = store.createTrack({
           duration: converted.duration,
           mediaFilename: fileName,

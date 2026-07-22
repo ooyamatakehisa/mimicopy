@@ -12,6 +12,12 @@ export type BeatGrid = {
   source: "madmom";
 };
 
+export type BeatGridReference = {
+  duration: number;
+  sourceType: "youtube";
+  title: string;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -96,6 +102,31 @@ export function parseBeatGrid(value: unknown): BeatGrid | null {
   };
 }
 
+function parseBeatGridReference(value: unknown): BeatGridReference | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const duration = readNumber(value, "duration");
+  const sourceType = readString(value, "sourceType");
+  const title = readString(value, "title");
+
+  if (
+    duration === null ||
+    duration < 0 ||
+    sourceType !== "youtube" ||
+    !title
+  ) {
+    return null;
+  }
+
+  return {
+    duration,
+    sourceType,
+    title
+  };
+}
+
 export function parseBeatGridResponse(value: unknown) {
   if (!isRecord(value)) {
     throw new Error("拍解析結果を読み込めませんでした。");
@@ -108,4 +139,19 @@ export function parseBeatGridResponse(value: unknown) {
   }
 
   return beatGrid;
+}
+
+export function parseYoutubeBeatGridResponse(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("拍解析結果を読み込めませんでした。");
+  }
+
+  const beatGrid = parseBeatGrid(value.beatGrid);
+  const reference = parseBeatGridReference(value.reference);
+
+  if (!beatGrid || !reference) {
+    throw new Error("拍解析結果の形式が壊れています。");
+  }
+
+  return { beatGrid, reference };
 }
