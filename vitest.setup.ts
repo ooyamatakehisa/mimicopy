@@ -15,8 +15,29 @@ const audioBuffer = {
 };
 
 class AudioContextMock {
+  currentTime = 0;
+  destination = {};
+  createMediaElementSource = vi.fn(() => ({
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  }));
+  createGain = vi.fn(() => ({
+    connect: vi.fn(),
+    gain: {
+      exponentialRampToValueAtTime: vi.fn(),
+      setValueAtTime: vi.fn()
+    }
+  }));
+  createOscillator = vi.fn(() => ({
+    connect: vi.fn(),
+    frequency: { value: 0 },
+    start: vi.fn(),
+    stop: vi.fn(),
+    type: "sine"
+  }));
   decodeAudioData = vi.fn(() => Promise.resolve(audioBuffer));
   close = vi.fn(() => Promise.resolve(undefined));
+  resume = vi.fn(() => Promise.resolve(undefined));
 }
 
 const canvasContext = {

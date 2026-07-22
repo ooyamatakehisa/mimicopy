@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
+import type { LibraryClickTrack } from "./libraryStore.js";
 import { createLibraryStore } from "./libraryStore.js";
 
 let tempDirs: string[] = [];
@@ -49,6 +50,43 @@ describe("LibraryStore", () => {
     expect(persistedTrack?.markers).toEqual([
       { id: "marker-1", label: "Verse", time: 12.5 }
     ]);
+    reopenedStore.close();
+  });
+
+  it("persists a click track across store instances", async () => {
+    const paths = await createTempStorage();
+    const store = createLibraryStore(paths);
+    const track = store.createTrack({
+      duration: 0,
+      mediaFilename: "phrase.mp3",
+      sourceType: "upload",
+      title: "phrase.mp3"
+    });
+    const clickTrack: LibraryClickTrack = {
+      beatGrid: {
+        analyzedAt: "2026-07-20T00:00:00.000Z",
+        beats: [
+          { isDownbeat: true, position: 1, time: 0.25 },
+          { isDownbeat: false, position: 2, time: 0.75 }
+        ],
+        beatsPerBar: [4],
+        downbeats: [0.25],
+        source: "madmom"
+      },
+      reference: {
+        duration: 12,
+        sourceType: "youtube",
+        title: "Reference groove",
+        url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
+      }
+    };
+
+    expect(store.replaceClickTrack(track.id, clickTrack)).toEqual(clickTrack);
+    store.close();
+
+    const reopenedStore = createLibraryStore(paths);
+
+    expect(reopenedStore.getClickTrack(track.id)).toEqual(clickTrack);
     reopenedStore.close();
   });
 

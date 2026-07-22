@@ -8,8 +8,11 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
 import {
+  analyzeYoutubeBeatGrid,
+  beatGridQueryKey,
   decodedTrackQueryKey,
   fetchMediaArrayBuffer,
+  fetchSavedBeatGrid,
   fetchTrack,
   trackQueryKey,
   updateTrackTitle
@@ -23,6 +26,7 @@ import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
+import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
 import { useWaveformViewport } from "./useWaveformViewport";
@@ -158,6 +162,33 @@ function TrackEditor({
       cacheTrack(queryClient, updatedTrack);
     }
   });
+  const [beatGridInputErrorMessage, setBeatGridInputErrorMessage] = useState<
+    string | null
+  >(null);
+  const [beatReferenceUrl, setBeatReferenceUrl] = useState("");
+  const beatGridQuery = useQuery({
+    queryFn: () => fetchSavedBeatGrid(track.id),
+    queryKey: beatGridQueryKey(track.id)
+  });
+  const beatGridMutation = useMutation({
+    mutationFn: (url: string) =>
+      analyzeYoutubeBeatGrid({ trackId: track.id, url }),
+    onSuccess: (analysis) => {
+      queryClient.setQueryData(beatGridQueryKey(track.id), analysis);
+      setBeatReferenceUrl(analysis.reference.url);
+    }
+  });
+  const beatGrid = beatGridQuery.data?.beatGrid ?? null;
+  const beatReferenceTitle = beatGridQuery.data?.reference.title ?? null;
+  const savedBeatReferenceUrl = beatGridQuery.data?.reference.url ?? "";
+
+  useEffect(() => {
+    if (!savedBeatReferenceUrl) {
+      return;
+    }
+
+    setBeatReferenceUrl((currentUrl) => currentUrl || savedBeatReferenceUrl);
+  }, [savedBeatReferenceUrl]);
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
     trackDuration: track.duration,
@@ -171,14 +202,29 @@ function TrackEditor({
     currentTime: playback.currentTime,
     duration: playback.duration
   });
+  const clickTrack = useClickTrack({ beatGrid, playback });
+  const beatGridErrorMessage =
+    beatGridInputErrorMessage ??
+    (beatGridMutation.isError
+      ? getErrorMessage(beatGridMutation.error, "拍解析に失敗しました。")
+      : beatGridQuery.isError
+        ? getErrorMessage(
+            beatGridQuery.error,
+            "保存済みの拍解析結果を読み込めませんでした。"
+          )
+        : null);
   const message =
     playback.playbackError ??
     markers.markerSaveErrorMessage ??
+    beatGridErrorMessage ??
+    clickTrack.clickErrorMessage ??
     playback.durationErrorMessage ??
     `${track.title} を読み込みました。`;
   const loadState =
     playback.playbackError ||
     markers.markerSaveErrorMessage ||
+    beatGridErrorMessage ||
+    clickTrack.clickErrorMessage ||
     playback.durationErrorMessage
       ? "error"
       : "ready";
@@ -208,6 +254,20 @@ function TrackEditor({
     } catch {
       return false;
     }
+  };
+
+  const analyzeBeatGrid = (youtubeUrl: string) => {
+    const trimmedUrl = youtubeUrl.trim();
+
+    setBeatGridInputErrorMessage(null);
+    clickTrack.resetScheduledBeats();
+
+    if (!trimmedUrl) {
+      setBeatGridInputErrorMessage("クリック用のYouTube URLを入力してください。");
+      return;
+    }
+
+    beatGridMutation.mutate(trimmedUrl);
   };
 
   return (
@@ -247,6 +307,7 @@ function TrackEditor({
 
         <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:grid-cols-1">
           <WaveformPanel
+            beatGrid={beatGrid}
             currentTime={playback.currentTime}
             duration={playback.duration}
             loadState={loadState}
@@ -266,6 +327,15 @@ function TrackEditor({
       </Surface>
 
       <TransportControls
+        beatGrid={beatGrid}
+        beatGridErrorMessage={beatGridErrorMessage}
+        beatReferenceTitle={beatReferenceTitle}
+        beatReferenceUrl={beatReferenceUrl}
+        clickTrack={clickTrack}
+        isAnalyzingBeatGrid={beatGridMutation.isPending}
+        isLoadingBeatGrid={beatGridQuery.isLoading}
+        onBeatReferenceUrlChange={setBeatReferenceUrl}
+        onAnalyzeBeatGrid={analyzeBeatGrid}
         markers={markers}
         playback={playback}
         waveform={waveform}

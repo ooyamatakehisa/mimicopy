@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import type { YoutubeBeatGridAnalysis } from "./lib/beats";
 import type { TrackDetail, TrackSummary } from "./lib/library";
 
 const baseTimestamp = "2026-07-15T00:00:00.000Z";
@@ -45,11 +46,35 @@ function expectLoadedMessage(title: string) {
   ).toBeGreaterThan(0);
 }
 
+function createClickTrackAnalysis(): YoutubeBeatGridAnalysis {
+  return {
+    beatGrid: {
+      analyzedAt: "2026-07-20T00:00:00.000Z",
+      beats: [
+        { isDownbeat: true, position: 1, time: 0.5 },
+        { isDownbeat: false, position: 2, time: 1 },
+        { isDownbeat: false, position: 3, time: 1.5 }
+      ],
+      beatsPerBar: [4],
+      downbeats: [0.5],
+      source: "madmom"
+    },
+    reference: {
+      duration: 10,
+      sourceType: "youtube",
+      title: "Reference groove",
+      url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
+    }
+  };
+}
+
 describe("App", () => {
+  let savedClickTrack: YoutubeBeatGridAnalysis | null;
   let tracks: TrackDetail[];
 
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
+    savedClickTrack = null;
     tracks = [];
 
     vi.stubGlobal(
@@ -116,6 +141,20 @@ describe("App", () => {
           tracks = [track];
 
           return Response.json({ track });
+        }
+
+        if (url === "/api/tracks/track-1/beat-grid" && method === "GET") {
+          return Response.json(
+            savedClickTrack ?? { beatGrid: null, reference: null }
+          );
+        }
+
+        if (
+          url === "/api/tracks/track-1/beat-grid/youtube" &&
+          method === "POST"
+        ) {
+          savedClickTrack = createClickTrackAnalysis();
+          return Response.json(savedClickTrack);
         }
 
         if (url === "/media/track-1.mp3") {
@@ -340,6 +379,61 @@ describe("App", () => {
 
     fireEvent.click(screen.getByTitle("波形を縮小"));
     expect(within(zoomControls).getByText("1x")).toBeVisible();
+  });
+
+  it("analyzes beats and toggles the click track", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expectLoadedMessage("phrase.mp3");
+    });
+
+    const clickTrackControls = screen.getByLabelText("Click track");
+    const clickSourceInput = screen.getByLabelText("Click source YouTube URL");
+    const clickButton = screen.getByTitle("クリック音をオン/オフ");
+
+    expect(clickButton).toBeDisabled();
+    await waitFor(() => {
+      expect(
+        within(clickTrackControls).getByText("No beat grid")
+      ).toBeVisible();
+    });
+
+    fireEvent.change(clickSourceInput, {
+      target: { value: "https://www.youtube.com/watch?v=DFRdswY-WHU" }
+    });
+    fireEvent.click(screen.getByTitle("クリック用YouTubeを解析"));
+
+    await waitFor(() => {
+      expect(
+        within(clickTrackControls).getByText(/3 beats \/ 1 downbeats/)
+      ).toBeVisible();
+    });
+    expect(within(clickTrackControls).getByText(/Reference groove/)).toBeVisible();
+
+    expect(clickButton).not.toBeDisabled();
+    fireEvent.click(clickButton);
+    expect(clickButton).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(clickButton);
+    expect(clickButton).toHaveAttribute("aria-pressed", "false");
+
+    view.unmount();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByLabelText("Click track")).getByText(
+          /3 beats \/ 1 downbeats/
+        )
+      ).toBeVisible();
+    });
+    expect(screen.getByTitle("クリック音をオン/オフ")).toBeEnabled();
+    expect(screen.getByLabelText("Click source YouTube URL")).toHaveValue(
+      "https://www.youtube.com/watch?v=DFRdswY-WHU"
+    );
   });
 
   it("loads an mp3 and adds a marker from an arbitrary time", async () => {

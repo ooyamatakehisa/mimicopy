@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const reuseServer = process.env.MIMICOPY_E2E_REUSE_SERVER === "1";
+const clientPort =
+  process.env.MIMICOPY_CLIENT_PORT ?? (reuseServer ? "8080" : "8090");
+const apiPort = process.env.MIMICOPY_API_PORT ?? "5184";
+const baseURL = `http://127.0.0.1:${clientPort}`;
+
 export default defineConfig({
   expect: {
     timeout: 10_000
@@ -10,16 +16,17 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 45_000,
   use: {
-    baseURL: "http://127.0.0.1:8090",
+    baseURL,
     trace: "on-first-retry"
   },
-  webServer: {
-    command:
-      "rm -rf .playwright-storage && PORT=5184 MIMICOPY_API_PORT=5184 MIMICOPY_CLIENT_PORT=8090 MIMICOPY_STORAGE_DIR=.playwright-storage pnpm dev",
-    reuseExistingServer: false,
-    timeout: 30_000,
-    url: "http://127.0.0.1:8090"
-  },
+  webServer: reuseServer
+    ? undefined
+    : {
+        command: `rm -rf .playwright-storage && PORT=${apiPort} MIMICOPY_API_PORT=${apiPort} MIMICOPY_CLIENT_PORT=${clientPort} MIMICOPY_STORAGE_DIR=.playwright-storage pnpm dev`,
+        reuseExistingServer: false,
+        timeout: 30_000,
+        url: baseURL
+      },
   workers: 1,
   projects: [
     {

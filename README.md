@@ -13,9 +13,26 @@ For local development without Docker:
 - Node.js 24.18.0
 - pnpm 11+
 - `ffmpeg` in `PATH` for YouTube-to-mp3 conversion
+- Python with `madmom` installed for beat/downbeat analysis
 
 If `ffmpeg` is installed in a custom location for development, start the server
 with `FFMPEG_PATH=/path/to/ffmpeg pnpm dev`.
+
+Install madmom for the Python interpreter used by the server:
+
+```sh
+python3 -m pip install madmom
+```
+
+If madmom is installed in a custom Python environment, start the server with
+`MIMICOPY_MADMOM_PYTHON=/path/to/python pnpm dev`.
+
+The downbeat tracker models 3/4 and 4/4 by default. Override that with a comma
+separated list:
+
+```sh
+MIMICOPY_BEATS_PER_BAR=4 pnpm dev
+```
 
 ## Development
 
@@ -43,6 +60,17 @@ For local development without Docker:
 pnpm install
 pnpm dev
 ```
+
+Open the client URL printed by Vite.
+
+## Beat And Click Track
+
+In the track editor, paste a YouTube URL into the Click track controls and use
+the refresh button to run madmom beat/downbeat analysis on that separate audio
+source. Once the beat grid is loaded, toggle `Click` to layer synthesized click
+sounds over the current track playback. Downbeats use the accent click. The
+beat/downbeat positions and YouTube reference are saved in SQLite for the open
+track and load automatically the next time that track is opened.
 
 ## Verification
 

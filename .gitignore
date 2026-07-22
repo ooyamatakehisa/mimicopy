@@ -9,6 +9,7 @@ test-results/
 .env
 .env.*
 storage/media/
+storage/beat-references/
 storage/*.sqlite
 storage/*.sqlite-*
 *-player-script.js

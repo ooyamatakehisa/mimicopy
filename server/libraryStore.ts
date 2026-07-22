@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  parseStoredBeatGrid,
+  type BeatGrid
+} from "./beatAnalysis.js";
 
 export type LibrarySourceType = "upload" | "youtube" | "imported";
 
@@ -24,6 +28,18 @@ export type LibraryTrackSummary = {
 
 export type LibraryTrack = LibraryTrackSummary & {
   markers: LibraryMarker[];
+};
+
+export type LibraryBeatGridReference = {
+  duration: number;
+  sourceType: "youtube";
+  title: string;
+  url: string;
+};
+
+export type LibraryClickTrack = {
+  beatGrid: BeatGrid;
+  reference: LibraryBeatGridReference;
 };
 
 type CreateTrackInput = {
@@ -104,6 +120,22 @@ function rowToMarker(row: Record<string, unknown>): LibraryMarker {
   };
 }
 
+function rowToClickTrack(row: Record<string, unknown>): LibraryClickTrack {
+  const beatGrid = parseStoredBeatGrid(
+    JSON.parse(requireString(row, "beat_grid_json")) as unknown
+  );
+
+  return {
+    beatGrid,
+    reference: {
+      duration: toFiniteNumber(row.reference_duration),
+      sourceType: "youtube",
+      title: requireString(row, "reference_title"),
+      url: requireString(row, "reference_url")
+    }
+  };
+}
+
 function createSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA foreign_keys = ON;
@@ -129,6 +161,16 @@ function createSchema(database: DatabaseSync) {
 
     CREATE INDEX IF NOT EXISTS markers_track_time_index
       ON markers(track_id, time);
+
+    CREATE TABLE IF NOT EXISTS click_tracks (
+      track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+      beat_grid_json TEXT NOT NULL,
+      reference_url TEXT NOT NULL,
+      reference_title TEXT NOT NULL,
+      reference_duration REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -334,6 +376,65 @@ export class LibraryStore {
     }
 
     return this.getTrack(trackId);
+  }
+
+  getClickTrack(trackId: string) {
+    const row = this.#database
+      .prepare(
+        `
+          SELECT
+            beat_grid_json,
+            reference_url,
+            reference_title,
+            reference_duration
+          FROM click_tracks
+          WHERE track_id = ?
+        `
+      )
+      .get(trackId);
+
+    return row ? rowToClickTrack(row) : null;
+  }
+
+  replaceClickTrack(trackId: string, clickTrack: LibraryClickTrack) {
+    if (!this.getMediaFilename(trackId)) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          INSERT INTO click_tracks (
+            track_id,
+            beat_grid_json,
+            reference_url,
+            reference_title,
+            reference_duration,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(track_id) DO UPDATE SET
+            beat_grid_json = excluded.beat_grid_json,
+            reference_url = excluded.reference_url,
+            reference_title = excluded.reference_title,
+            reference_duration = excluded.reference_duration,
+            updated_at = excluded.updated_at
+        `
+      )
+      .run(
+        trackId,
+        JSON.stringify(clickTrack.beatGrid),
+        clickTrack.reference.url,
+        normalizeDisplayTitle(clickTrack.reference.title),
+        Math.max(0, clickTrack.reference.duration),
+        now,
+        now
+      );
+
+    return this.getClickTrack(trackId);
   }
 
   deleteTrack(trackId: string) {

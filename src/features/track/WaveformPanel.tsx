@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import type { BeatGrid } from "../../lib/beats";
 import { cn } from "../../lib/cn";
 import type { LoadState } from "../../lib/loadState";
 import type { Marker } from "../../lib/markers";
@@ -14,6 +15,7 @@ import {
 import type { DynamicStyle } from "./types";
 
 type WaveformPanelProps = {
+  beatGrid: BeatGrid | null;
   currentTime: number;
   duration: number;
   loadState: LoadState;
@@ -26,6 +28,46 @@ type WaveformPanelProps = {
   sortedMarkers: Marker[];
   waveformRange: WaveformRange;
 };
+
+function drawBeatGridLines({
+  beatGrid,
+  context,
+  height,
+  waveformRange,
+  width
+}: {
+  beatGrid: BeatGrid | null;
+  context: CanvasRenderingContext2D;
+  height: number;
+  waveformRange: WaveformRange;
+  width: number;
+}) {
+  if (!beatGrid || beatGrid.beats.length === 0) {
+    return;
+  }
+
+  let drawnBeatCount = 0;
+
+  for (const beat of beatGrid.beats) {
+    if (beat.time < waveformRange.start || beat.time > waveformRange.end) {
+      continue;
+    }
+
+    if (drawnBeatCount >= 2000) {
+      return;
+    }
+
+    const x = Math.round(
+      (timeToWaveformPercent(beat.time, waveformRange) / 100) * width
+    );
+
+    context.fillStyle = beat.isDownbeat
+      ? "rgba(255, 138, 101, 0.64)"
+      : "rgba(244, 247, 245, 0.2)";
+    context.fillRect(x, 0, beat.isDownbeat ? 2 : 1, height);
+    drawnBeatCount += 1;
+  }
+}
 
 function getWaveformInteractionBounds(
   waveform: HTMLElement | null,
@@ -43,6 +85,7 @@ function getWaveformInteractionBounds(
 }
 
 export function WaveformPanel({
+  beatGrid,
   currentTime,
   duration,
   loadState,
@@ -224,38 +267,44 @@ export function WaveformPanel({
     if (peaks.length === 0) {
       context.fillStyle = "rgba(244, 247, 245, 0.18)";
       context.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
-      return;
+    } else {
+      const visiblePeaks = aggregateVisibleWaveformPeaks({
+        columnCount: cssWidth,
+        duration,
+        peaks,
+        range: waveformRange
+      });
+
+      if (visiblePeaks.length === 0) {
+        context.fillStyle = "rgba(244, 247, 245, 0.18)";
+        context.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
+      } else {
+        const centerY = cssHeight / 2;
+        const barWidth = cssWidth / visiblePeaks.length;
+
+        context.fillStyle = gradient;
+
+        for (let index = 0; index < visiblePeaks.length; index += 1) {
+          const peak = visiblePeaks[index];
+          const min = Math.min(0, peak.min);
+          const max = Math.max(0, peak.max);
+          const x = index * barWidth;
+          const y = centerY - max * centerY;
+          const barHeight = Math.max(1, (max - min) * centerY);
+
+          context.fillRect(x, y, Math.max(1, barWidth), barHeight);
+        }
+      }
     }
 
-    const visiblePeaks = aggregateVisibleWaveformPeaks({
-      columnCount: cssWidth,
-      duration,
-      peaks,
-      range: waveformRange
+    drawBeatGridLines({
+      beatGrid,
+      context,
+      height: cssHeight,
+      waveformRange,
+      width: cssWidth
     });
-
-    if (visiblePeaks.length === 0) {
-      context.fillStyle = "rgba(244, 247, 245, 0.18)";
-      context.fillRect(0, cssHeight / 2 - 1, cssWidth, 2);
-      return;
-    }
-
-    const centerY = cssHeight / 2;
-    const barWidth = cssWidth / visiblePeaks.length;
-
-    context.fillStyle = gradient;
-
-    for (let index = 0; index < visiblePeaks.length; index += 1) {
-      const peak = visiblePeaks[index];
-      const min = Math.min(0, peak.min);
-      const max = Math.max(0, peak.max);
-      const x = index * barWidth;
-      const y = centerY - max * centerY;
-      const barHeight = Math.max(1, (max - min) * centerY);
-
-      context.fillRect(x, y, Math.max(1, barWidth), barHeight);
-    }
-  }, [duration, peaks, waveformRange, waveformSize]);
+  }, [beatGrid, duration, peaks, waveformRange, waveformSize]);
 
   return (
     <section
