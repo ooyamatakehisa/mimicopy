@@ -8,9 +8,9 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n CLIENT,API -c cyan,magenta \"pnpm dev:client\" \"pnpm dev:server\"",
+    "dev": "concurrently -k --restart-tries -1 --restart-after 1000 -n CLIENT,API -c cyan,magenta \"pnpm dev:client\" \"pnpm dev:server\"",
     "dev:client": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "nodemon --exitcrash --watch server --ext ts --exec tsx server/index.ts",
     "e2e": "playwright test",
     "build": "pnpm typecheck && pnpm build:client && pnpm build:server",
     "build:client": "vite build",
@@ -32,6 +32,7 @@
     "react-dom": "^19.2.7",
     "react-router": "^8.2.0",
     "tailwind-merge": "^3.6.0",
+    "undici": "^8.8.0",
     "youtubei.js": "^17.2.0"
   },
   "devDependencies": {
@@ -46,6 +47,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "^10.0.3",
     "jsdom": "^29.1.1",
+    "nodemon": "^3.1.14",
     "oxlint": "^1.71.0",
     "tailwindcss": "^4.3.2",
     "tsx": "^4.22.4",

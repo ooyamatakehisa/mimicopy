@@ -23,6 +23,18 @@ services:
       - .:/app
       - mimicopy-node-modules:/app/node_modules
       - ${MIMICOPY_DEV_STORAGE_PATH:-./storage}:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5174/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
     restart: unless-stopped
 
   mimicopy:

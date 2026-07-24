@@ -12,6 +12,7 @@ import {
   runMadmomBeatAnalysis,
   type BeatGrid
 } from "./beatAnalysis.js";
+import { installGlobalHttpDispatcher } from "./httpDispatcher.js";
 import {
   createLibraryStore,
   type LibraryClickTrack,
@@ -19,6 +20,8 @@ import {
   type LibraryTrack,
   type LibraryTrackSummary
 } from "./libraryStore.js";
+
+installGlobalHttpDispatcher();
 
 const PORT = Number(process.env.PORT ?? 5174);
 const MAX_YOUTUBE_DURATION_SECONDS = 60 * 60 * 2;
