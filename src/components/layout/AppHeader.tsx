@@ -1,24 +1,37 @@
 import type { ReactNode } from "react";
+import { cn } from "../../lib/cn";
 import { Surface } from "../ui/Surface";
 
 type AppHeaderProps = {
   actions: ReactNode;
+  mobileActionsInline?: boolean;
   onNavigateHome: () => void;
   subtitle: ReactNode;
 };
 
 export function AppHeader({
   actions,
+  mobileActionsInline = false,
   onNavigateHome,
   subtitle
 }: AppHeaderProps) {
   return (
     <Surface
       as="header"
-      className="flex min-h-[82px] items-center justify-between gap-4 rounded-[2rem] p-4 max-lg:flex-col max-lg:items-stretch"
+      className={cn(
+        "flex min-h-[82px] items-center justify-between gap-4 rounded-[2rem] p-4",
+        mobileActionsInline
+          ? "max-lg:flex-row max-lg:items-center"
+          : "max-lg:flex-col max-lg:items-stretch"
+      )}
     >
       <button
-        className="flex min-w-60 items-center gap-3 rounded-full bg-white/[0.03] p-1.5 pr-5 text-left transition hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal max-lg:w-full"
+        className={cn(
+          "flex min-w-60 items-center gap-3 rounded-full bg-white/[0.03] p-1.5 pr-5 text-left transition hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal",
+          mobileActionsInline
+            ? "max-lg:min-w-0 max-lg:flex-1"
+            : "max-lg:w-full"
+        )}
         type="button"
         title="ライブラリへ"
         onClick={onNavigateHome}

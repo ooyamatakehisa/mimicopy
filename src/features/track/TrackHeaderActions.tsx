@@ -1,11 +1,14 @@
 import { ArrowLeft } from "lucide-react";
-import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/Button";
 
 export function TrackHeaderActions({ onBack }: { onBack: () => void }) {
   return (
-    <Button title="ライブラリへ戻る" onClick={onBack}>
+    <IconButton
+      aria-label="ライブラリへ戻る"
+      title="ライブラリへ戻る"
+      onClick={onBack}
+    >
       <ArrowLeft size={18} />
-      <span>Library</span>
-    </Button>
+    </IconButton>
   );
 }

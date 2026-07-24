@@ -40,10 +40,15 @@ function createTrack(overrides: Partial<TrackDetail> = {}): TrackDetail {
   };
 }
 
-function expectLoadedMessage(title: string) {
+function expectTrackEditorLoaded(title: string) {
   expect(
-    screen.getAllByText(`${title} を読み込みました。`).length
-  ).toBeGreaterThan(0);
+    within(screen.getByLabelText("Audio editor")).getByRole("heading", {
+      name: title
+    })
+  ).toBeVisible();
+  expect(
+    screen.queryByText(`${title} を読み込みました。`)
+  ).not.toBeInTheDocument();
 }
 
 function createClickTrackAnalysis(): YoutubeBeatGridAnalysis {
@@ -196,9 +201,14 @@ describe("App", () => {
     fireEvent.click(savedTrackButton);
 
     await waitFor(() => {
-      expectLoadedMessage("saved-phrase.mp3");
+      expectTrackEditorLoaded("saved-phrase.mp3");
     });
 
+    expect(
+      within(screen.getByRole("button", { name: "ライブラリへ戻る" })).queryByText(
+        "Library"
+      )
+    ).not.toBeInTheDocument();
     expect(window.location.pathname).toBe("/tracks/track-1");
     expect(screen.getByDisplayValue("Verse")).toBeVisible();
     expect(screen.getByLabelText("Verse time")).toHaveValue("0:03");
@@ -236,7 +246,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     fireEvent.click(screen.getByTitle("表示名を編集"));
@@ -267,7 +277,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     const speedControls = screen.getByLabelText("Playback speed");
@@ -288,7 +298,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     const speedControls = screen.getByLabelText("Playback speed");
@@ -337,7 +347,7 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expectLoadedMessage("phrase.mp3");
+        expectTrackEditorLoaded("phrase.mp3");
       });
 
       const speedDownButton = await screen.findByTitle("速度を下げる");
@@ -367,7 +377,7 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     const zoomControls = screen.getByLabelText("Waveform zoom");
@@ -377,7 +387,48 @@ describe("App", () => {
     fireEvent.click(screen.getByTitle("波形を拡大"));
     expect(within(zoomControls).getByText("2x")).toBeVisible();
 
+    for (const zoom of [
+      "4x",
+      "8x",
+      "12x",
+      "16x",
+      "20x",
+      "24x",
+      "28x",
+      "32x"
+    ]) {
+      fireEvent.click(screen.getByTitle("波形を拡大"));
+      expect(within(zoomControls).getByText(zoom)).toBeVisible();
+    }
+
+    expect(screen.getByTitle("波形を拡大")).toBeDisabled();
+
     fireEvent.click(screen.getByTitle("波形を縮小"));
+    expect(within(zoomControls).getByText("28x")).toBeVisible();
+  });
+
+  it("changes waveform zoom with trackpad pinch gestures", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    render(<App />);
+
+    await waitFor(() => {
+      expectTrackEditorLoaded("phrase.mp3");
+    });
+
+    const waveform = screen.getByRole("slider", { name: "再生位置" });
+    const zoomControls = screen.getByLabelText("Waveform zoom");
+
+    fireEvent.wheel(waveform, { deltaY: -100 });
+    expect(within(zoomControls).getByText("1x")).toBeVisible();
+
+    fireEvent.wheel(waveform, { ctrlKey: true, deltaY: -10 });
+    expect(within(zoomControls).getByText("1.11x")).toBeVisible();
+
+    fireEvent.wheel(waveform, { ctrlKey: true, deltaY: -10 });
+    expect(within(zoomControls).getByText("1.22x")).toBeVisible();
+
+    fireEvent.wheel(waveform, { ctrlKey: true, deltaY: 100 });
     expect(within(zoomControls).getByText("1x")).toBeVisible();
   });
 
@@ -387,7 +438,7 @@ describe("App", () => {
     const view = render(<App />);
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     const clickTrackControls = screen.getByLabelText("Click track");
@@ -449,7 +500,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     fireEvent.change(await screen.findByLabelText("Marker time"), {
@@ -475,7 +526,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      expectLoadedMessage("phrase.mp3");
+      expectTrackEditorLoaded("phrase.mp3");
     });
 
     await screen.findByTitle("現在位置にマーカー追加");
@@ -546,7 +597,7 @@ describe("App", () => {
       });
 
       await waitFor(() => {
-        expectLoadedMessage("phrase.mp3");
+        expectTrackEditorLoaded("phrase.mp3");
       });
 
       fireEvent.change(await screen.findByLabelText("Marker time"), {

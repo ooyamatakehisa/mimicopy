@@ -180,8 +180,9 @@ test("loads audio and supports the main playback and marker workflow", async ({
 
   await expect(page).toHaveURL(/\/tracks\/[^/]+$/);
   await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "e2e-tone.mp3 を読み込みました。"
+    "ready"
   );
+  await expect(page.getByText("e2e-tone.mp3 を読み込みました。")).toHaveCount(0);
   const editor = page.getByLabel("Audio editor");
   await editor.getByTitle("表示名を編集").click();
   await editor.getByLabel("e2e-tone.mp3 display name").fill("Detail practice");
@@ -195,6 +196,19 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
+
+  const waveformSlider = page.getByRole("slider", { name: "再生位置" });
+
+  await waveformSlider.dispatchEvent("wheel", {
+    ctrlKey: true,
+    deltaY: -10
+  });
+  await expect(page.getByLabel("Waveform zoom")).toContainText("1.11x");
+  await waveformSlider.dispatchEvent("wheel", {
+    ctrlKey: true,
+    deltaY: 100
+  });
+  await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   let savedClickTrack: Record<string, unknown> | null = null;
 
   await page.route("**/api/tracks/*/beat-grid", async (route) => {
@@ -349,8 +363,9 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
 
   await expect(page).toHaveURL("/tracks/e2e-youtube-track");
   await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "Mock YouTube Track を読み込みました。"
+    "ready"
   );
+  await expect(page.getByText("Mock YouTube Track を読み込みました。")).toHaveCount(0);
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
@@ -392,7 +407,7 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/tracks\/[^/]+$/, { timeout: 90_000 });
   await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "を読み込みました。",
+    "ready",
     { timeout: 30_000 }
   );
   await expect(page.getByLabel("Playback speed")).toContainText("1x");

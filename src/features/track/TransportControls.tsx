@@ -15,6 +15,11 @@ import { type FormEvent } from "react";
 import { Button, IconButton } from "../../components/ui/Button";
 import { Surface } from "../../components/ui/Surface";
 import type { BeatGrid } from "../../lib/beats";
+import {
+  formatWaveformZoom,
+  maxWaveformZoom,
+  minWaveformZoom
+} from "../../lib/waveform";
 import type { MarkersState } from "./useMarkersState";
 import type { ClickTrackState } from "./useClickTrack";
 import type { PlaybackState } from "./usePlaybackState";
@@ -63,7 +68,7 @@ export function TransportControls({
   return (
     <Surface
       as="footer"
-      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:flex-col max-lg:items-stretch"
+      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:order-1 max-lg:flex-col max-lg:items-stretch"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Button
@@ -177,17 +182,17 @@ export function TransportControls({
         <ZoomOut className="text-muted" size={18} aria-hidden="true" />
         <IconButton
           title="波形を縮小"
-          disabled={waveform.waveformZoom === 1}
+          disabled={waveform.waveformZoom <= minWaveformZoom}
           onClick={() => waveform.changeWaveformZoom("out")}
         >
           <ZoomOut size={17} />
         </IconButton>
         <strong className="min-w-11 text-center tabular-nums text-ink">
-          {waveform.waveformZoom}x
+          {formatWaveformZoom(waveform.waveformZoom)}
         </strong>
         <IconButton
           title="波形を拡大"
-          disabled={waveform.waveformZoom === 16}
+          disabled={waveform.waveformZoom >= maxWaveformZoom}
           onClick={() => waveform.changeWaveformZoom("in")}
         >
           <ZoomIn size={17} />

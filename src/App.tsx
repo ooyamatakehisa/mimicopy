@@ -46,7 +46,7 @@ function AppRoutes() {
       className={cn(
         "grid min-h-screen content-start gap-4 p-5 max-sm:gap-3 max-sm:p-3",
         isTrackRoute
-          ? "grid-rows-[auto_minmax(0,1fr)_auto]"
+          ? "grid-rows-[auto_minmax(0,1fr)_auto] max-lg:grid-rows-none"
           : "grid-rows-[auto_minmax(0,1fr)]"
       )}
     >

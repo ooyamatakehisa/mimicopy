@@ -3,9 +3,14 @@ export type WaveformPeak = {
   max: number;
 };
 
-export const waveformZoomLevels = [1, 2, 4, 8, 16] as const;
+export const waveformZoomLevels = [
+  1, 2, 4, 8, 12, 16, 20, 24, 28, 32
+] as const;
 
 export type WaveformZoom = (typeof waveformZoomLevels)[number];
+export type WaveformZoomDirection = "in" | "out";
+export const minWaveformZoom = waveformZoomLevels[0];
+export const maxWaveformZoom = waveformZoomLevels.at(-1) ?? 32;
 
 export type WaveformRange = {
   end: number;
@@ -13,6 +18,26 @@ export type WaveformRange = {
 };
 
 export const defaultWaveformZoom: WaveformZoom = 1;
+
+export function clampWaveformZoom(zoom: number) {
+  const safeZoom = Number.isFinite(zoom) ? zoom : defaultWaveformZoom;
+
+  return Math.min(maxWaveformZoom, Math.max(minWaveformZoom, safeZoom));
+}
+
+export function scaleWaveformZoom(currentZoom: number, scale: number) {
+  const safeCurrentZoom = clampWaveformZoom(currentZoom);
+
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return safeCurrentZoom;
+  }
+
+  return clampWaveformZoom(safeCurrentZoom * scale);
+}
+
+export function formatWaveformZoom(zoom: number) {
+  return `${Number(clampWaveformZoom(zoom).toFixed(2))}x`;
+}
 
 type PeakSource = {
   duration: number;
@@ -110,19 +135,26 @@ export function aggregateVisibleWaveformPeaks({
 
 export function nextWaveformZoom(
   currentZoom: number,
-  direction: "in" | "out"
+  direction: WaveformZoomDirection
 ): WaveformZoom {
-  const currentIndex = waveformZoomLevels.findIndex(
-    (zoom) => zoom === currentZoom
-  );
-  const fallbackIndex = waveformZoomLevels.indexOf(defaultWaveformZoom);
-  const safeIndex = currentIndex >= 0 ? currentIndex : fallbackIndex;
-  const nextIndex =
-    direction === "in"
-      ? Math.min(waveformZoomLevels.length - 1, safeIndex + 1)
-      : Math.max(0, safeIndex - 1);
+  const safeCurrentZoom = clampWaveformZoom(currentZoom);
 
-  return waveformZoomLevels[nextIndex];
+  if (direction === "in") {
+    return (
+      waveformZoomLevels.find((zoom) => zoom > safeCurrentZoom) ??
+      maxWaveformZoom
+    );
+  }
+
+  for (let index = waveformZoomLevels.length - 1; index >= 0; index -= 1) {
+    const zoom = waveformZoomLevels[index];
+
+    if (zoom < safeCurrentZoom) {
+      return zoom;
+    }
+  }
+
+  return minWaveformZoom;
 }
 
 export function getWaveformRange(
@@ -136,7 +168,7 @@ export function getWaveformRange(
     return { end: 0, start: 0 };
   }
 
-  const safeZoom = Number.isFinite(zoom) ? Math.max(1, zoom) : 1;
+  const safeZoom = clampWaveformZoom(zoom);
   const visibleDuration = safeDuration / safeZoom;
   const maxStart = Math.max(0, safeDuration - visibleDuration);
   const safeStart = Number.isFinite(viewportStart) ? viewportStart : 0;
@@ -154,7 +186,7 @@ export function centerWaveformRange(
   zoom: number
 ) {
   const safeDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0;
-  const safeZoom = Number.isFinite(zoom) ? Math.max(1, zoom) : 1;
+  const safeZoom = clampWaveformZoom(zoom);
   const visibleDuration = safeDuration / safeZoom;
 
   return getWaveformRange(

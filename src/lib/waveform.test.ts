@@ -3,9 +3,11 @@ import {
   aggregateVisibleWaveformPeaks,
   buildWaveformPeaks,
   centerWaveformRange,
+  formatWaveformZoom,
   getWaveformRange,
   keepTimeInWaveformRange,
   nextWaveformZoom,
+  scaleWaveformZoom,
   timeToWaveformPercent,
   waveformPercentToTime
 } from "./waveform";
@@ -73,9 +75,23 @@ describe("waveform helpers", () => {
   it("steps through supported waveform zoom levels", () => {
     expect(nextWaveformZoom(1, "in")).toBe(2);
     expect(nextWaveformZoom(2, "in")).toBe(4);
-    expect(nextWaveformZoom(16, "in")).toBe(16);
+    expect(nextWaveformZoom(8, "in")).toBe(12);
+    expect(nextWaveformZoom(16, "in")).toBe(20);
+    expect(nextWaveformZoom(28, "in")).toBe(32);
+    expect(nextWaveformZoom(32, "in")).toBe(32);
+    expect(nextWaveformZoom(24, "out")).toBe(20);
     expect(nextWaveformZoom(4, "out")).toBe(2);
     expect(nextWaveformZoom(1, "out")).toBe(1);
+    expect(nextWaveformZoom(1.25, "in")).toBe(2);
+    expect(nextWaveformZoom(1.25, "out")).toBe(1);
+  });
+
+  it("scales and formats continuous waveform zoom values", () => {
+    expect(scaleWaveformZoom(2, 1.1)).toBeCloseTo(2.2);
+    expect(scaleWaveformZoom(24, 2)).toBe(32);
+    expect(scaleWaveformZoom(1.1, 0.5)).toBe(1);
+    expect(formatWaveformZoom(2.234)).toBe("2.23x");
+    expect(formatWaveformZoom(32)).toBe("32x");
   });
 
   it("calculates visible waveform ranges from duration and zoom", () => {

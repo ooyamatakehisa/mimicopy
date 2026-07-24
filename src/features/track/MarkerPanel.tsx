@@ -71,7 +71,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
 
   return (
     <aside
-      className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04] max-lg:min-h-[330px]"
+      className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04] max-lg:order-2 max-lg:min-h-[330px]"
       aria-label="Markers"
     >
       <SectionHeader

@@ -79,6 +79,7 @@ export function TrackEditorPage({
         <AppHeader
           subtitle="保存済みMP3を読み込み中"
           actions={<TrackHeaderActions onBack={navigateToLibrary} />}
+          mobileActionsInline
           onNavigateHome={navigateToLibrary}
         />
         <TrackLoadingPanel message="保存済みMP3を読み込んでいます。" />
@@ -92,6 +93,7 @@ export function TrackEditorPage({
         <AppHeader
           subtitle="保存済みMP3を読み込めませんでした"
           actions={<TrackHeaderActions onBack={navigateToLibrary} />}
+          mobileActionsInline
           onNavigateHome={navigateToLibrary}
         />
         <TrackLoadingPanel
@@ -213,21 +215,13 @@ function TrackEditor({
             "保存済みの拍解析結果を読み込めませんでした。"
           )
         : null);
-  const message =
+  const errorMessage =
     playback.playbackError ??
     markers.markerSaveErrorMessage ??
     beatGridErrorMessage ??
     clickTrack.clickErrorMessage ??
-    playback.durationErrorMessage ??
-    `${track.title} を読み込みました。`;
-  const loadState =
-    playback.playbackError ||
-    markers.markerSaveErrorMessage ||
-    beatGridErrorMessage ||
-    clickTrack.clickErrorMessage ||
-    playback.durationErrorMessage
-      ? "error"
-      : "ready";
+    playback.durationErrorMessage;
+  const loadState = errorMessage ? "error" : "ready";
   const titleMessage = titleMutation.isPending
     ? `${titleMutation.variables?.title.trim() ?? track.title} を保存しています。`
     : titleMutation.isError
@@ -236,7 +230,8 @@ function TrackEditor({
         ? `${titleMutation.data.title} に変更しました。`
         : null;
   const description =
-    titleMessage ?? (markers.isSavingMarkers ? "マーカー保存中" : message);
+    titleMessage ??
+    (markers.isSavingMarkers ? "マーカー保存中" : errorMessage);
 
   const renameTrack = async (title: string) => {
     const trimmedTitle = title.trim();
@@ -279,14 +274,16 @@ function TrackEditor({
           markers.isSavingMarkers ? "マーカー保存中" : "保存済み"
         }`}
         actions={<TrackHeaderActions onBack={navigateToLibrary} />}
+        mobileActionsInline
         onNavigateHome={navigateToLibrary}
       />
 
       <Surface
-        className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem]"
+        className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem] max-lg:contents"
         aria-label="Audio editor"
       >
         <SectionHeader
+          className="max-lg:rounded-[2rem] max-lg:border max-lg:border-white/10 max-lg:bg-surface/82 max-lg:shadow-soft max-lg:backdrop-blur-2xl"
           title={track.title}
           description={description}
           action={
@@ -305,13 +302,13 @@ function TrackEditor({
           }
         />
 
-        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:grid-cols-1">
+        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:contents">
           <WaveformPanel
             beatGrid={beatGrid}
             currentTime={playback.currentTime}
             duration={playback.duration}
             loadState={loadState}
-            message={message}
+            message={errorMessage}
             moveMarkerTo={(markerId, time) =>
               markers.moveMarkerTo(markerId, time, playback.duration)
             }
@@ -319,6 +316,9 @@ function TrackEditor({
             seekTo={playback.seekTo}
             selectMarker={markers.selectMarker}
             selectedMarkerId={markers.selectedMarkerId}
+            scaleWaveformZoomContinuously={
+              waveform.scaleWaveformZoomContinuously
+            }
             sortedMarkers={markers.sortedMarkers}
             waveformRange={waveform.waveformRange}
           />

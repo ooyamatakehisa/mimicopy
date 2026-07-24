@@ -5,7 +5,8 @@ import {
   getWaveformRange,
   keepTimeInWaveformRange,
   nextWaveformZoom,
-  type WaveformZoom
+  scaleWaveformZoom,
+  type WaveformZoomDirection
 } from "../../lib/waveform";
 
 export function useWaveformViewport({
@@ -15,8 +16,7 @@ export function useWaveformViewport({
   currentTime: number;
   duration: number;
 }) {
-  const [waveformZoom, setWaveformZoom] =
-    useState<WaveformZoom>(defaultWaveformZoom);
+  const [waveformZoom, setWaveformZoom] = useState<number>(defaultWaveformZoom);
   const [waveformStart, setWaveformStart] = useState(0);
   const waveformRange = useMemo(
     () => getWaveformRange(duration, waveformZoom, waveformStart),
@@ -24,9 +24,22 @@ export function useWaveformViewport({
   );
 
   const changeWaveformZoom = useCallback(
-    (direction: "in" | "out") => {
+    (direction: WaveformZoomDirection) => {
       setWaveformZoom((currentZoom) => {
         const nextZoom = nextWaveformZoom(currentZoom, direction);
+
+        setWaveformStart(centerWaveformRange(currentTime, duration, nextZoom));
+
+        return nextZoom;
+      });
+    },
+    [currentTime, duration]
+  );
+
+  const scaleWaveformZoomContinuously = useCallback(
+    (scale: number) => {
+      setWaveformZoom((currentZoom) => {
+        const nextZoom = scaleWaveformZoom(currentZoom, scale);
 
         setWaveformStart(centerWaveformRange(currentTime, duration, nextZoom));
 
@@ -45,10 +58,16 @@ export function useWaveformViewport({
   return useMemo(
     () => ({
       changeWaveformZoom,
+      scaleWaveformZoomContinuously,
       waveformRange,
       waveformZoom
     }),
-    [changeWaveformZoom, waveformRange, waveformZoom]
+    [
+      changeWaveformZoom,
+      scaleWaveformZoomContinuously,
+      waveformRange,
+      waveformZoom
+    ]
   );
 }
 

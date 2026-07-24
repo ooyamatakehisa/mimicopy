@@ -13,18 +13,20 @@ import {
   type WaveformRange
 } from "../../lib/waveform";
 import type { DynamicStyle } from "./types";
+import { useWaveformZoomGestures } from "./useWaveformZoomGestures";
 
 type WaveformPanelProps = {
   beatGrid: BeatGrid | null;
   currentTime: number;
   duration: number;
   loadState: LoadState;
-  message: string;
+  message: string | null;
   moveMarkerTo: (markerId: string, time: number) => void;
   peaks: WaveformPeak[];
   seekTo: (time: number) => void;
   selectMarker: (markerId: string | null) => void;
   selectedMarkerId: string | null;
+  scaleWaveformZoomContinuously: (scale: number) => void;
   sortedMarkers: Marker[];
   waveformRange: WaveformRange;
 };
@@ -95,6 +97,7 @@ export function WaveformPanel({
   seekTo,
   selectMarker,
   selectedMarkerId,
+  scaleWaveformZoomContinuously,
   sortedMarkers,
   waveformRange
 }: WaveformPanelProps) {
@@ -103,6 +106,12 @@ export function WaveformPanel({
   const draggingMarkerIdRef = useRef<string | null>(null);
   const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
   const [waveformSize, setWaveformSize] = useState({ height: 0, width: 0 });
+
+  useWaveformZoomGestures({
+    onScale: scaleWaveformZoomContinuously,
+    targetRef: waveformRef
+  });
+
   const visibleMarkers = useMemo(
     () =>
       sortedMarkers.filter(
@@ -311,10 +320,17 @@ export function WaveformPanel({
       className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04]"
       aria-label="Waveform"
     >
-      <div className="mx-3 mt-3 grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-full border border-white/8 bg-black/18 px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3">
+      <div
+        className={cn(
+          "mx-3 mt-3 grid min-h-14 items-center gap-3 rounded-full border border-white/8 bg-black/18 px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3",
+          message
+            ? "grid-cols-[auto_minmax(0,1fr)_auto]"
+            : "grid-cols-[auto_minmax(0,1fr)]"
+        )}
+      >
         <StatusBadge state={loadState}>{loadState}</StatusBadge>
-        <span className="min-w-0 truncate">{message}</span>
-        <span className="whitespace-nowrap font-bold tabular-nums text-ink">
+        {message ? <span className="min-w-0 truncate">{message}</span> : null}
+        <span className="justify-self-end whitespace-nowrap font-bold tabular-nums text-ink max-sm:justify-self-start">
           {formatTime(currentTime)} / {formatTime(duration)}
         </span>
       </div>
@@ -327,6 +343,7 @@ export function WaveformPanel({
         aria-valuemin={0}
         aria-valuemax={Math.max(0, Math.floor(duration))}
         aria-valuenow={Math.floor(currentTime)}
+        title="クリックでシーク・ピンチで波形をズーム"
         tabIndex={0}
         onPointerDown={handleWaveformPointerDown}
       >
