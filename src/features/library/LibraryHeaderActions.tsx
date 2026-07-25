@@ -1,6 +1,18 @@
 import { Link, LoaderCircle, Plus, Upload } from "lucide-react";
-import { type ChangeEvent, type FormEvent, useCallback, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  useCallback,
+  useRef,
+  useState
+} from "react";
 import { Button, IconButton } from "../../components/ui/Button";
+import {
+  isStemName,
+  stemLabels,
+  stemNames,
+  type StemName
+} from "../../lib/separation";
 import type { LibraryState } from "./useLibraryState";
 
 type LibraryHeaderActionsProps = Pick<
@@ -15,6 +27,7 @@ export function LibraryHeaderActions({
   uploadFile
 }: LibraryHeaderActionsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [targetStem, setTargetStem] = useState<StemName | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState("");
 
   const handleFileChange = useCallback(
@@ -37,13 +50,14 @@ export function LibraryHeaderActions({
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
-      void convertYoutube(youtubeUrl).then((didConvert) => {
+      void convertYoutube({ targetStem, url: youtubeUrl }).then((didConvert) => {
         if (didConvert) {
+          setTargetStem(null);
           setYoutubeUrl("");
         }
       });
     },
-    [convertYoutube, youtubeUrl]
+    [convertYoutube, targetStem, youtubeUrl]
   );
 
   return (
@@ -69,7 +83,7 @@ export function LibraryHeaderActions({
       </Button>
 
       <form
-        className="grid h-11 min-w-[300px] max-w-[680px] flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] py-0 pl-4 pr-1 transition-[background,border-color,box-shadow] focus-within:border-teal/55 focus-within:bg-white/[0.09] focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-lg:w-full max-lg:min-w-0"
+        className="grid min-h-11 min-w-[420px] max-w-[820px] flex-1 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] py-0 pl-4 pr-1 transition-[background,border-color,box-shadow] focus-within:border-teal/55 focus-within:bg-white/[0.09] focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-lg:w-full max-lg:min-w-0 max-sm:grid-cols-[auto_minmax(0,1fr)_auto] max-sm:py-1"
         onSubmit={handleYoutubeSubmit}
       >
         <label className="sr-only" htmlFor="youtube-url">
@@ -85,6 +99,26 @@ export function LibraryHeaderActions({
           value={youtubeUrl}
           onChange={(event) => setYoutubeUrl(event.target.value)}
         />
+        <label className="sr-only" htmlFor="youtube-target-stem">
+          音源分離
+        </label>
+        <select
+          id="youtube-target-stem"
+          aria-label="分離する楽器"
+          className="h-9 max-w-36 rounded-full border border-white/10 bg-[#17201f] px-3 text-sm text-ink outline-none focus:border-teal/55 max-sm:col-span-2 max-sm:col-start-2 max-sm:max-w-none"
+          value={targetStem ?? ""}
+          onChange={(event) => {
+            const value = event.target.value;
+            setTargetStem(isStemName(value) ? value : null);
+          }}
+        >
+          <option value="">音源分離なし</option>
+          {stemNames.map((stemName) => (
+            <option key={stemName} value={stemName}>
+              {stemLabels[stemName]}を分離
+            </option>
+          ))}
+        </select>
         <IconButton type="submit" title="YouTubeを変換" disabled={isConverting}>
           {isConverting ? (
             <LoaderCircle className="animate-spin" size={18} />

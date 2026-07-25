@@ -20,6 +20,12 @@ import {
   type LibraryTrack,
   type LibraryTrackSummary
 } from "./libraryStore.js";
+import {
+  createStemSeparatorClient,
+  isStemName,
+  type SeparateAudio,
+  type StemName
+} from "./stemSeparation.js";
 
 installGlobalHttpDispatcher();
 
@@ -31,6 +37,7 @@ const bundledFfmpegPath = require("ffmpeg-static") as unknown;
 let youtubeClientPromise: Promise<Innertube> | null = null;
 
 type YoutubeRequestBody = {
+  targetStem?: unknown;
   url?: unknown;
 };
 
@@ -101,6 +108,7 @@ type ConvertYoutubeAudio = (
 type CreateAppOptions = {
   analyzeBeats?: (audioPath: string) => Promise<BeatGrid>;
   convertYoutubeAudio?: ConvertYoutubeAudio;
+  separateAudio?: SeparateAudio;
   storageDir?: string;
 };
 
@@ -252,6 +260,18 @@ function isLikelyMp3Upload(request: Request) {
 function parseDuration(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new InputError("Duration must be a non-negative number.");
+  }
+
+  return value;
+}
+
+function parseTargetStem(value: unknown): StemName | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  if (!isStemName(value)) {
+    throw new InputError("Choose a supported stem to separate.");
   }
 
   return value;
@@ -475,6 +495,59 @@ export function createApp(options: CreateAppOptions = {}) {
   const analyzeBeats = options.analyzeBeats ?? runMadmomBeatAnalysis;
   const convertYoutubeAudio =
     options.convertYoutubeAudio ?? convertYoutubeToMp3;
+  const separateAudio =
+    options.separateAudio ?? createStemSeparatorClient();
+  let separationQueue = Promise.resolve();
+  const scheduleSeparation = ({
+    inputFilename,
+    outputFilename,
+    targetStem,
+    trackId
+  }: {
+    inputFilename: string;
+    outputFilename: string;
+    targetStem: StemName;
+    trackId: string;
+  }) => {
+    const run = async () => {
+      if (!store.getMediaFilename(trackId)) {
+        return;
+      }
+
+      store.updateSeparationStatus({ status: "running", trackId });
+
+      try {
+        await separateAudio({
+          inputFilename,
+          outputFilename,
+          targetStem
+        });
+
+        if (!store.getMediaFilename(trackId)) {
+          await rm(path.join(paths.mediaDir, outputFilename), {
+            force: true
+          }).catch(() => undefined);
+          return;
+        }
+
+        store.updateSeparationStatus({ status: "completed", trackId });
+      } catch (error) {
+        await rm(path.join(paths.mediaDir, outputFilename), {
+          force: true
+        }).catch(() => undefined);
+        store.updateSeparationStatus({
+          error: toErrorMessage(error).slice(0, 1000),
+          status: "failed",
+          trackId
+        });
+      }
+    };
+
+    separationQueue = separationQueue.then(run, run);
+  };
+  for (const separation of store.listIncompleteSeparations()) {
+    scheduleSeparation(separation);
+  }
   const analyzeYoutubeClickTrack = async (
     url: unknown
   ): Promise<LibraryClickTrack> => {
@@ -755,16 +828,24 @@ export function createApp(options: CreateAppOptions = {}) {
       response: Response<TrackDeleteResponseBody>
     ) => {
       try {
-        const mediaFilename = store.deleteTrack(getTrackId(request));
+        const deletedMedia = store.deleteTrack(getTrackId(request));
 
-        if (!mediaFilename) {
+        if (!deletedMedia) {
           response.status(404).json({ error: "Track was not found." });
           return;
         }
 
-        await rm(path.join(paths.mediaDir, mediaFilename), {
+        await rm(path.join(paths.mediaDir, deletedMedia.mediaFilename), {
           force: true
         }).catch(() => undefined);
+        if (deletedMedia.separationMediaFilename) {
+          await rm(
+            path.join(paths.mediaDir, deletedMedia.separationMediaFilename),
+            {
+              force: true
+            }
+          ).catch(() => undefined);
+        }
 
         response.json({ ok: true });
       } catch (error) {
@@ -783,16 +864,38 @@ export function createApp(options: CreateAppOptions = {}) {
 
       try {
         const videoId = getYoutubeVideoId(request.body.url);
+        const targetStem = parseTargetStem(request.body.targetStem);
 
         const fileName = `${randomUUID()}.mp3`;
         outputPath = path.join(paths.mediaDir, fileName);
         const converted = await convertYoutubeAudio(videoId, outputPath);
-        const track = store.createTrack({
+        let track = store.createTrack({
           duration: converted.duration,
           mediaFilename: fileName,
           sourceType: "youtube",
           title: converted.title
         });
+
+        if (targetStem) {
+          const separationFilename = `${randomUUID()}-${targetStem}.mp3`;
+          const trackWithSeparation = store.createSeparation({
+            mediaFilename: separationFilename,
+            targetStem,
+            trackId: track.id
+          });
+
+          if (!trackWithSeparation) {
+            throw new Error("Could not create the stem separation job.");
+          }
+
+          track = trackWithSeparation;
+          scheduleSeparation({
+            inputFilename: fileName,
+            outputFilename: separationFilename,
+            targetStem,
+            trackId: track.id
+          });
+        }
 
         response.json({
           duration: converted.duration,

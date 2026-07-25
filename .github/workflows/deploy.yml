@@ -17,6 +17,7 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
+  STEM_IMAGE_NAME: ghcr.io/${{ github.repository }}-stem-separator
 
 jobs:
   verify:
@@ -85,6 +86,23 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Extract stem separator Docker metadata
+        id: stem-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.STEM_IMAGE_NAME }}
+          tags: |
+            type=raw,value=main
+            type=sha,prefix=sha-
+
+      - name: Build and push stem separator image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/stem-separator
+          push: true
+          tags: ${{ steps.stem-meta.outputs.tags }}
+          labels: ${{ steps.stem-meta.outputs.labels }}
+
   deploy:
     name: Deploy to Server
     needs: image
@@ -116,8 +134,8 @@ jobs:
           chmod 600 ~/.ssh/mimicopy_deploy
           ssh-keyscan -p "${DEPLOY_PORT:-22}" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-      - name: Pull image and restart service
+      - name: Pull images and restart services
         if: steps.deploy-config.outputs.enabled == 'true'
         run: |
           ssh -i ~/.ssh/mimicopy_deploy -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && git pull --ff-only && docker compose pull mimicopy && docker compose up -d --remove-orphans mimicopy"
+            "cd '$DEPLOY_PATH' && git pull --ff-only && docker compose pull mimicopy stem-separator && docker compose up -d --remove-orphans mimicopy stem-separator"

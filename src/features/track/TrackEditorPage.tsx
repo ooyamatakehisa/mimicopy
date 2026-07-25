@@ -7,6 +7,7 @@ import { SectionHeader, Surface } from "../../components/ui/Surface";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
+import { cn } from "../../lib/cn";
 import {
   analyzeYoutubeBeatGrid,
   beatGridQueryKey,
@@ -24,11 +25,13 @@ import { cacheTrack } from "../../lib/trackQueryCache";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
+import { StemMixer } from "./StemMixer";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
 import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
+import { useStemMixer } from "./useStemMixer";
 import { useWaveformViewport } from "./useWaveformViewport";
 import { WaveformPanel } from "./WaveformPanel";
 
@@ -56,7 +59,15 @@ export function TrackEditorPage({
 }: TrackEditorPageProps) {
   const trackQuery = useQuery({
     queryFn: () => fetchTrack(trackId),
-    queryKey: trackQueryKey(trackId)
+    queryKey: trackQueryKey(trackId),
+    refetchInterval: (query) => {
+      const separation = query.state.data?.separation;
+
+      return separation?.status === "queued" ||
+        separation?.status === "running"
+        ? 3000
+        : false;
+    }
   });
   const track = trackQuery.data ?? null;
   const decodedQuery = useQuery({
@@ -196,6 +207,7 @@ function TrackEditor({
     trackDuration: track.duration,
     trackId: track.id
   });
+  const mixer = useStemMixer();
   const markers = useMarkersState({
     initialMarkers: track.markers,
     trackId: track.id
@@ -267,7 +279,13 @@ function TrackEditor({
 
   return (
     <>
-      <PlaybackAudio mediaUrl={track.mediaUrl} playback={playback} />
+      <PlaybackAudio
+        mediaUrl={track.mediaUrl}
+        originalVolume={mixer.originalVolume}
+        playback={playback}
+        stemMediaUrl={track.separation?.mediaUrl ?? null}
+        stemVolume={mixer.stemVolume}
+      />
       <KeyboardShortcuts markers={markers} playback={playback} />
       <AppHeader
         subtitle={`${track.title} ・ ${
@@ -302,27 +320,39 @@ function TrackEditor({
           }
         />
 
-        <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:contents">
-          <WaveformPanel
-            beatGrid={beatGrid}
-            currentTime={playback.currentTime}
-            duration={playback.duration}
-            loadState={loadState}
-            message={errorMessage}
-            moveMarkerTo={(markerId, time) =>
-              markers.moveMarkerTo(markerId, time, playback.duration)
-            }
-            peaks={decoded.peaks}
-            seekTo={playback.seekTo}
-            selectMarker={markers.selectMarker}
-            selectedMarkerId={markers.selectedMarkerId}
-            scaleWaveformZoomContinuously={
-              waveform.scaleWaveformZoomContinuously
-            }
-            sortedMarkers={markers.sortedMarkers}
-            waveformRange={waveform.waveformRange}
-          />
-          <MarkerPanel markers={markers} playback={playback} />
+        <div
+          className={cn(
+            "grid min-h-0 max-lg:contents",
+            track.separation
+              ? "grid-rows-[auto_minmax(0,1fr)]"
+              : "grid-rows-[minmax(0,1fr)]"
+          )}
+        >
+          {track.separation ? (
+            <StemMixer mixer={mixer} separation={track.separation} />
+          ) : null}
+          <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:contents">
+            <WaveformPanel
+              beatGrid={beatGrid}
+              currentTime={playback.currentTime}
+              duration={playback.duration}
+              loadState={loadState}
+              message={errorMessage}
+              moveMarkerTo={(markerId, time) =>
+                markers.moveMarkerTo(markerId, time, playback.duration)
+              }
+              peaks={decoded.peaks}
+              seekTo={playback.seekTo}
+              selectMarker={markers.selectMarker}
+              selectedMarkerId={markers.selectedMarkerId}
+              scaleWaveformZoomContinuously={
+                waveform.scaleWaveformZoomContinuously
+              }
+              sortedMarkers={markers.sortedMarkers}
+              waveformRange={waveform.waveformRange}
+            />
+            <MarkerPanel markers={markers} playback={playback} />
+          </div>
         </div>
       </Surface>
 

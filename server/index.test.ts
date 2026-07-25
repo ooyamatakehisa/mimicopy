@@ -3,7 +3,7 @@
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp, getYoutubeVideoId, youtubeDownloadPlans } from "./index.js";
 
 const tempDirs: string[] = [];
@@ -251,6 +251,157 @@ describe("beat grid API", () => {
         }
       });
       await expect(access(convertedPaths[0] ?? "")).rejects.toThrow();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+  });
+});
+
+describe("YouTube stem separation API", () => {
+  it("queues one requested stem and exposes it on the saved track", async () => {
+    const storageDir = await createTempStorageDir();
+    let finishSeparation: (() => void) | undefined;
+    const separationGate = new Promise<void>((resolve) => {
+      finishSeparation = resolve;
+    });
+    const separationCalls: Array<{
+      inputFilename: string;
+      outputFilename: string;
+      targetStem: string;
+    }> = [];
+    const app = createApp({
+      convertYoutubeAudio: async (videoId, outputPath) => {
+        expect(videoId).toBe("OS45uTF_8P0");
+        await writeFile(outputPath, new Uint8Array([1, 2, 3]));
+        return { duration: 306, title: "Tokyo Incidents" };
+      },
+      separateAudio: async (input) => {
+        separationCalls.push(input);
+        await separationGate;
+        await writeFile(
+          path.join(storageDir, "media", input.outputFilename),
+          new Uint8Array([4, 5, 6])
+        );
+      },
+      storageDir
+    });
+    const server = app.listen(0);
+
+    try {
+      const address = server.address();
+
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a port.");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const response = await fetch(`${baseUrl}/api/youtube`, {
+        body: JSON.stringify({
+          targetStem: "guitar",
+          url: "https://www.youtube.com/watch?v=OS45uTF_8P0"
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      });
+      const body = (await response.json()) as {
+        track: {
+          id: string;
+          separation: {
+            mediaUrl: string | null;
+            status: string;
+            targetStem: string;
+          };
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.track.separation).toMatchObject({
+        mediaUrl: null,
+        status: "queued",
+        targetStem: "guitar"
+      });
+
+      await vi.waitFor(() => {
+        expect(separationCalls).toHaveLength(1);
+      });
+      expect(separationCalls[0]).toMatchObject({
+        targetStem: "guitar"
+      });
+
+      const runningTrack = await fetch(
+        `${baseUrl}/api/tracks/${body.track.id}`
+      ).then((trackResponse) => trackResponse.json()) as {
+        track: { separation: { status: string } };
+      };
+      expect(runningTrack.track.separation.status).toBe("running");
+
+      finishSeparation?.();
+
+      await vi.waitFor(async () => {
+        const completedTrack = await fetch(
+          `${baseUrl}/api/tracks/${body.track.id}`
+        ).then((trackResponse) => trackResponse.json()) as {
+          track: {
+            separation: { mediaUrl: string | null; status: string };
+          };
+        };
+
+        expect(completedTrack.track.separation.status).toBe("completed");
+        expect(completedTrack.track.separation.mediaUrl).toMatch(
+          /^\/media\/.+-guitar\.mp3$/
+        );
+      });
+    } finally {
+      finishSeparation?.();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("rejects unsupported stem names before downloading audio", async () => {
+    const storageDir = await createTempStorageDir();
+    const convertYoutubeAudio = vi.fn();
+    const app = createApp({ convertYoutubeAudio, storageDir });
+    const server = app.listen(0);
+
+    try {
+      const address = server.address();
+
+      if (!address || typeof address === "string") {
+        throw new Error("Test server did not expose a port.");
+      }
+
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/youtube`,
+        {
+          body: JSON.stringify({
+            targetStem: "saxophone",
+            url: "https://www.youtube.com/watch?v=OS45uTF_8P0"
+          }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST"
+        }
+      );
+
+      expect(response.status).toBe(400);
+      expect(convertYoutubeAudio).not.toHaveBeenCalled();
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {

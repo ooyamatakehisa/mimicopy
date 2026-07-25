@@ -90,6 +90,58 @@ describe("LibraryStore", () => {
     reopenedStore.close();
   });
 
+  it("persists one stem separation and exposes media only when completed", async () => {
+    const paths = await createTempStorage();
+    const store = createLibraryStore(paths);
+    const track = store.createTrack({
+      duration: 10,
+      mediaFilename: "phrase.mp3",
+      sourceType: "youtube",
+      title: "phrase.mp3"
+    });
+
+    const queuedTrack = store.createSeparation({
+      mediaFilename: "phrase-guitar.mp3",
+      targetStem: "guitar",
+      trackId: track.id
+    });
+
+    expect(queuedTrack?.separation).toMatchObject({
+      mediaUrl: null,
+      status: "queued",
+      targetStem: "guitar"
+    });
+    expect(store.listIncompleteSeparations()).toEqual([
+      {
+        inputFilename: "phrase.mp3",
+        outputFilename: "phrase-guitar.mp3",
+        targetStem: "guitar",
+        trackId: track.id
+      }
+    ]);
+
+    const completedTrack = store.updateSeparationStatus({
+      status: "completed",
+      trackId: track.id
+    });
+
+    expect(completedTrack?.separation).toMatchObject({
+      mediaUrl: "/media/phrase-guitar.mp3",
+      status: "completed",
+      targetStem: "guitar"
+    });
+    store.close();
+
+    const reopenedStore = createLibraryStore(paths);
+
+    expect(reopenedStore.getTrack(track.id)?.separation).toMatchObject({
+      mediaUrl: "/media/phrase-guitar.mp3",
+      status: "completed",
+      targetStem: "guitar"
+    });
+    reopenedStore.close();
+  });
+
   it("imports existing mp3 files from the media directory", async () => {
     const paths = await createTempStorage();
 
@@ -106,6 +158,46 @@ describe("LibraryStore", () => {
       title: "legacy.mp3"
     });
     store.close();
+  });
+
+  it("keeps separated stems out of standalone library tracks", async () => {
+    const paths = await createTempStorage();
+    const stemFilename = "phrase-guitar.mp3";
+    const store = createLibraryStore(paths);
+    const track = store.createTrack({
+      duration: 10,
+      mediaFilename: "phrase.mp3",
+      sourceType: "youtube",
+      title: "Phrase"
+    });
+
+    store.createSeparation({
+      mediaFilename: stemFilename,
+      targetStem: "guitar",
+      trackId: track.id
+    });
+    store.createTrack({
+      duration: 0,
+      mediaFilename: stemFilename,
+      sourceType: "imported",
+      title: stemFilename
+    });
+    expect(store.listTracks()).toHaveLength(2);
+    await writeFile(
+      path.join(paths.mediaDir, stemFilename),
+      new Uint8Array()
+    );
+    store.close();
+
+    const reopenedStore = createLibraryStore(paths);
+
+    expect(reopenedStore.listTracks()).toEqual([
+      expect.objectContaining({
+        id: track.id,
+        title: "Phrase"
+      })
+    ]);
+    reopenedStore.close();
   });
 
   it("updates track display titles", async () => {

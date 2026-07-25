@@ -1,5 +1,7 @@
 node_modules/
 .pnpm-store/
+__pycache__/
+*.py[cod]
 dist/
 dist-server/
 coverage/
@@ -11,6 +13,9 @@ test-results/
 .env.*
 storage/media/
 storage/beat-references/
+storage/cache/
+storage/models/
+storage/openvino-cache/
 storage/*.sqlite
 storage/*.sqlite-*
 *-player-script.js

@@ -24,6 +24,7 @@ export function usePlaybackState({
   trackId: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const stemAudioRef = useRef<HTMLAudioElement>(null);
   const queryClient = useQueryClient();
   const savedDurationRef = useRef(trackDuration);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -51,6 +52,9 @@ export function usePlaybackState({
       if (audio) {
         audio.currentTime = nextTime;
       }
+      if (stemAudioRef.current) {
+        stemAudioRef.current.currentTime = nextTime;
+      }
 
       setCurrentTime(nextTime);
     },
@@ -72,13 +76,28 @@ export function usePlaybackState({
     }
 
     if (audio.paused) {
-      void audio.play().catch((error: unknown) => {
+      const stemAudio = stemAudioRef.current;
+
+      if (stemAudio) {
+        stemAudio.currentTime = audio.currentTime;
+      }
+
+      const playRequests = [audio.play()];
+
+      if (stemAudio) {
+        playRequests.push(stemAudio.play());
+      }
+
+      void Promise.all(playRequests).catch((error: unknown) => {
+        audio.pause();
+        stemAudio?.pause();
         setPlaybackError(getErrorMessage(error, "再生に失敗しました。"));
       });
       return;
     }
 
     audio.pause();
+    stemAudioRef.current?.pause();
   }, []);
 
   const changePlaybackRate = useCallback(
@@ -134,6 +153,7 @@ export function usePlaybackState({
       playbackRate,
       seekBySeconds,
       seekTo,
+      stemAudioRef,
       syncMediaDuration,
       syncMediaTime,
       togglePlayback
@@ -150,6 +170,7 @@ export function usePlaybackState({
       playbackRate,
       seekBySeconds,
       seekTo,
+      stemAudioRef,
       syncMediaDuration,
       syncMediaTime,
       togglePlayback

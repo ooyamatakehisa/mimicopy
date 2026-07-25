@@ -36,7 +36,8 @@ function createTrack(overrides: Partial<TrackDetail> = {}): TrackDetail {
     sourceType: "upload",
     title: "phrase.mp3",
     updatedAt: baseTimestamp,
-    ...overrides
+    ...overrides,
+    separation: overrides.separation ?? null
   };
 }
 
@@ -430,6 +431,52 @@ describe("App", () => {
 
     fireEvent.wheel(waveform, { ctrlKey: true, deltaY: 100 });
     expect(within(zoomControls).getByText("1x")).toBeVisible();
+  });
+
+  it("mixes the original and completed separated stem", async () => {
+    tracks = [
+      createTrack({
+        separation: {
+          createdAt: baseTimestamp,
+          error: null,
+          mediaUrl: "/media/track-1-guitar.mp3",
+          status: "completed",
+          targetStem: "guitar",
+          updatedAt: baseTimestamp
+        },
+        sourceType: "youtube"
+      })
+    ];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      expectTrackEditorLoaded("phrase.mp3");
+    });
+
+    const mixer = screen.getByLabelText("Audio mixer");
+    const originalVolume = within(mixer).getByLabelText("原音の音量");
+    const audios = container.querySelectorAll("audio");
+
+    expect(audios).toHaveLength(2);
+    expect(within(mixer).getByLabelText("原音 channel")).toBeVisible();
+    expect(within(mixer).getByLabelText("ギター channel")).toBeVisible();
+
+    fireEvent.change(originalVolume, { target: { value: "35" } });
+    await waitFor(() => {
+      expect(audios[0]?.volume).toBeCloseTo(0.35);
+    });
+
+    fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
+    await waitFor(() => {
+      expect(audios[0]?.volume).toBe(0);
+      expect(audios[1]?.volume).toBe(1);
+    });
+
+    fireEvent.click(within(mixer).getByTitle("ギターをミュート"));
+    await waitFor(() => {
+      expect(audios[1]?.volume).toBe(0);
+    });
   });
 
   it("analyzes beats and toggles the click track", async () => {

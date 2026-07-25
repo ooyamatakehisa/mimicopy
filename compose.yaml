@@ -1,4 +1,27 @@
 services:
+  stem-separator:
+    image: ghcr.io/ooyamatakehisa/mimicopy-stem-separator:${MIMICOPY_IMAGE_TAG:-main}
+    build:
+      context: ./services/stem-separator
+    user: "${MIMICOPY_UID:-1000}:${MIMICOPY_GID:-1000}"
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${MIMICOPY_RENDER_GID:-990}"
+    environment:
+      HOME: /tmp
+      MIMICOPY_MEDIA_DIR: /data/media
+      MIMICOPY_STEM_DEVICE: GPU
+      MIMICOPY_STEM_INFERENCE_PRECISION: f16
+      MIMICOPY_STEM_MODEL_PATH: /data/models/bs_roformer_sw_6stem_fp16.onnx
+      MIMICOPY_STEM_OPENVINO_CACHE_DIR: /data/openvino-cache
+      MIMICOPY_STEM_OVERLAP: "${MIMICOPY_STEM_OVERLAP:-0.25}"
+      XDG_CACHE_HOME: /data/cache
+      XDG_RUNTIME_DIR: /tmp
+    volumes:
+      - ${MIMICOPY_STORAGE_PATH:-./storage}:/data
+    restart: unless-stopped
+
   mimicopy-dev:
     build:
       context: .
@@ -6,6 +29,9 @@ services:
     command: pnpm dev
     profiles:
       - dev
+    depends_on:
+      stem-separator:
+        condition: service_healthy
     user: "${MIMICOPY_UID:-1000}:${MIMICOPY_GID:-1000}"
     ports:
       - "127.0.0.1:${MIMICOPY_DEV_CLIENT_PORT:-8080}:8080"
@@ -17,12 +43,13 @@ services:
       MIMICOPY_CLIENT_PORT: 8080
       MIMICOPY_MADMOM_PYTHON: /usr/bin/python3
       MIMICOPY_STORAGE_DIR: /data
+      MIMICOPY_STEM_SEPARATOR_URL: http://stem-separator:8091
       NODE_ENV: development
       PORT: 5174
     volumes:
       - .:/app
       - mimicopy-node-modules:/app/node_modules
-      - ${MIMICOPY_DEV_STORAGE_PATH:-./storage}:/data
+      - ${MIMICOPY_STORAGE_PATH:-./storage}:/data
     healthcheck:
       test:
         [
@@ -41,6 +68,9 @@ services:
     image: ghcr.io/ooyamatakehisa/mimicopy:${MIMICOPY_IMAGE_TAG:-main}
     build:
       context: .
+    depends_on:
+      stem-separator:
+        condition: service_healthy
     user: "${MIMICOPY_UID:-1000}:${MIMICOPY_GID:-1000}"
     ports:
       - "127.0.0.1:${MIMICOPY_HOST_PORT:-5174}:5174"
@@ -48,6 +78,7 @@ services:
       FFMPEG_PATH: /usr/bin/ffmpeg
       MIMICOPY_MADMOM_PYTHON: /usr/bin/python3
       MIMICOPY_STORAGE_DIR: /data
+      MIMICOPY_STEM_SEPARATOR_URL: http://stem-separator:8091
       NODE_ENV: production
       PORT: 5174
     volumes:

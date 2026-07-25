@@ -1,4 +1,9 @@
 import { sortMarkers, type Marker } from "./markers";
+import {
+  isStemName,
+  type SeparationStatus,
+  type TrackSeparation
+} from "./separation";
 
 export type LibrarySourceType = "upload" | "youtube" | "imported";
 
@@ -15,6 +20,7 @@ export type TrackSummary = {
 
 export type TrackDetail = TrackSummary & {
   markers: Marker[];
+  separation: TrackSeparation | null;
 };
 
 export function toTrackSummary(track: TrackDetail): TrackSummary {
@@ -46,6 +52,50 @@ function readNumber(record: Record<string, unknown>, key: string) {
 
 function isSourceType(value: string): value is LibrarySourceType {
   return value === "upload" || value === "youtube" || value === "imported";
+}
+
+function isSeparationStatus(value: string): value is SeparationStatus {
+  return (
+    value === "queued" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed"
+  );
+}
+
+function parseTrackSeparation(value: unknown): TrackSeparation | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const createdAt = readString(value, "createdAt");
+  const errorValue = value.error;
+  const mediaUrlValue = value.mediaUrl;
+  const status = readString(value, "status");
+  const targetStem = readString(value, "targetStem");
+  const updatedAt = readString(value, "updatedAt");
+
+  if (
+    !createdAt ||
+    (errorValue !== null && typeof errorValue !== "string") ||
+    (mediaUrlValue !== null && typeof mediaUrlValue !== "string") ||
+    !status ||
+    !isSeparationStatus(status) ||
+    !targetStem ||
+    !isStemName(targetStem) ||
+    !updatedAt
+  ) {
+    return null;
+  }
+
+  return {
+    createdAt,
+    error: errorValue,
+    mediaUrl: mediaUrlValue,
+    status,
+    targetStem,
+    updatedAt
+  };
 }
 
 export function parseTrackSummary(value: unknown): TrackSummary | null {
@@ -107,11 +157,24 @@ export function parseMarker(value: unknown): Marker | null {
 export function parseTrackDetail(value: unknown): TrackDetail | null {
   const summary = parseTrackSummary(value);
 
-  if (!summary || !isRecord(value) || !Array.isArray(value.markers)) {
+  if (
+    !summary ||
+    !isRecord(value) ||
+    !Array.isArray(value.markers) ||
+    !Object.prototype.hasOwnProperty.call(value, "separation")
+  ) {
     return null;
   }
 
   const markers: Marker[] = [];
+  const separation =
+    value.separation === null
+      ? null
+      : parseTrackSeparation(value.separation);
+
+  if (value.separation !== null && !separation) {
+    return null;
+  }
 
   for (const markerValue of value.markers) {
     const marker = parseMarker(markerValue);
@@ -125,7 +188,8 @@ export function parseTrackDetail(value: unknown): TrackDetail | null {
 
   return {
     ...summary,
-    markers: sortMarkers(markers)
+    markers: sortMarkers(markers),
+    separation
   };
 }
 

@@ -9,6 +9,7 @@ import {
   uploadTrack
 } from "../../lib/api";
 import type { LoadState } from "../../lib/loadState";
+import type { StemName } from "../../lib/separation";
 import { cacheTrack, removeCachedTrack } from "../../lib/trackQueryCache";
 
 type LibraryNotice = {
@@ -72,7 +73,13 @@ export function useLibraryState({
   );
 
   const convertYoutube = useCallback(
-    async (url: string) => {
+    async ({
+      targetStem,
+      url
+    }: {
+      targetStem: StemName | null;
+      url: string;
+    }) => {
       const trimmedUrl = url.trim();
 
       if (!trimmedUrl) {
@@ -89,7 +96,10 @@ export function useLibraryState({
       });
 
       try {
-        const track = await youtubeMutation.mutateAsync(trimmedUrl);
+        const track = await youtubeMutation.mutateAsync({
+          targetStem,
+          url: trimmedUrl
+        });
 
         cacheTrack(queryClient, track);
         setNotice({

@@ -7,7 +7,7 @@ const runRealYoutubeE2e = process.env.MIMICOPY_E2E_REAL_YOUTUBE === "1";
 
 function createToneWavBuffer() {
   const sampleRate = 44_100;
-  const durationSeconds = 1;
+  const durationSeconds = 3;
   const sampleCount = sampleRate * durationSeconds;
   const channelCount = 1;
   const bitsPerSample = 16;
@@ -57,14 +57,16 @@ async function expectInitialPlaybackPosition(page: Page) {
     "0:00 /"
   );
 
-  const mediaState = await page.locator("audio").evaluate((audioElement) => {
-    const audio = audioElement as HTMLAudioElement;
+  const mediaState = await page
+    .locator('audio[aria-label="Original audio"]')
+    .evaluate((audioElement) => {
+      const audio = audioElement as HTMLAudioElement;
 
-    return {
-      currentTime: audio.currentTime,
-      duration: audio.duration
-    };
-  });
+      return {
+        currentTime: audio.currentTime,
+        duration: audio.duration
+      };
+    });
   const playheadLeft = await page
     .locator(".waveformSurface > div")
     .last()
@@ -101,6 +103,14 @@ async function mockYoutubeConversion(page: Page) {
     markerCount: 0,
     markers: [],
     mediaUrl: "/media/e2e-youtube.mp3",
+    separation: {
+      createdAt: now,
+      error: null,
+      mediaUrl: "/media/e2e-youtube-guitar.mp3",
+      status: "completed",
+      targetStem: "guitar",
+      updatedAt: now
+    },
     sourceType: "youtube",
     title: "Mock YouTube Track",
     updatedAt: now
@@ -117,6 +127,11 @@ async function mockYoutubeConversion(page: Page) {
   };
 
   await page.route("**/api/youtube", async (route) => {
+    const requestBody = route.request().postDataJSON() as {
+      targetStem?: unknown;
+    };
+
+    expect(requestBody.targetStem).toBe("guitar");
     hasConvertedTrack = true;
     await route.fulfill({
       body: JSON.stringify({ track }),
@@ -154,6 +169,13 @@ async function mockYoutubeConversion(page: Page) {
     });
   });
   await page.route("**/media/e2e-youtube.mp3", async (route) => {
+    await route.fulfill({
+      body: createToneWavBuffer(),
+      contentType: "audio/mpeg",
+      status: 200
+    });
+  });
+  await page.route("**/media/e2e-youtube-guitar.mp3", async (route) => {
     await route.fulfill({
       body: createToneWavBuffer(),
       contentType: "audio/mpeg",
@@ -359,6 +381,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
 
   await page.getByLabel("YouTube URL").fill(realYoutubeUrl);
+  await page.getByLabel("分離する楽器").selectOption("guitar");
   await page.getByTitle("YouTubeを変換").click();
 
   await expect(page).toHaveURL("/tracks/e2e-youtube-track");
@@ -370,17 +393,97 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
 
-  const mediaState = await page.locator("audio").evaluate((audioElement) => {
-    const audio = audioElement as HTMLAudioElement;
+  const mediaState = await page
+    .locator('audio[aria-label="Original audio"]')
+    .evaluate((audioElement) => {
+      const audio = audioElement as HTMLAudioElement;
 
-    return {
-      duration: audio.duration,
-      src: audio.currentSrc
-    };
-  });
+      return {
+        duration: audio.duration,
+        src: audio.currentSrc
+      };
+    });
 
   expect(mediaState.src).toContain("/media/e2e-youtube.mp3");
   expect(mediaState.duration).toBeGreaterThan(0);
+  const mixer = page.getByLabel("Audio mixer");
+
+  await expect(mixer.getByLabel("原音 channel")).toBeVisible();
+  await expect(mixer.getByLabel("ギター channel")).toBeVisible();
+  await mixer.getByLabel("原音の音量").fill("40");
+  await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
+  await mixer.getByTitle("原音をミュート").click();
+  await expect(mixer.getByTitle("原音をミュート")).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await mixer.getByTitle("原音をミュート").click();
+  await mixer.getByTitle("ギターをソロ").click();
+  await expect(mixer.getByTitle("ギターをソロ")).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+
+  const originalAudio = page.locator('audio[aria-label="Original audio"]');
+  const stemAudio = page.locator(
+    'audio[aria-label="Separated stem audio"]'
+  );
+
+  await expect
+    .poll(async () => {
+      return page.locator("audio").evaluateAll(
+        (elements) =>
+          elements.length === 2 &&
+          elements.every(
+            (element) =>
+              (element as HTMLAudioElement).readyState >=
+              HTMLMediaElement.HAVE_CURRENT_DATA
+          )
+      );
+    })
+    .toBe(true);
+  await stemAudio.evaluate((element) => {
+    const audio = element as HTMLAudioElement;
+
+    audio.play = () => Promise.resolve();
+  });
+  await page.locator("audio").evaluateAll((elements) => {
+    const [originalAudio, stemAudio] =
+      elements as [HTMLAudioElement, HTMLAudioElement];
+
+    originalAudio.currentTime = 0.5;
+    stemAudio.currentTime = 0.5;
+    originalAudio.dispatchEvent(new Event("play"));
+  });
+  await expect(page.getByTitle("停止")).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.locator("audio").evaluateAll((elements) => {
+    const [originalAudio, stemAudio] =
+      elements as [HTMLAudioElement, HTMLAudioElement];
+
+    stemAudio.dataset.seekEvents = "0";
+    stemAudio.addEventListener("seeking", () => {
+      stemAudio.dataset.seekEvents = String(
+        Number(stemAudio.dataset.seekEvents ?? "0") + 1
+      );
+    });
+    originalAudio.currentTime = 0.4;
+  });
+  await expect
+    .poll(async () => {
+      const times = await page.locator("audio").evaluateAll((elements) =>
+        elements.map((element) => (element as HTMLAudioElement).currentTime)
+      );
+
+      return Math.abs((times[0] ?? 0) - (times[1] ?? 0));
+    })
+    .toBeLessThan(0.075);
+  await page.waitForTimeout(100);
+  await expect(
+    stemAudio
+  ).toHaveAttribute("data-seek-events", "0");
+  await originalAudio.dispatchEvent("pause");
+  await expect(page.getByTitle("再生")).toBeVisible();
 
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
@@ -414,14 +517,16 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
 
-  const mediaState = await page.locator("audio").evaluate((audioElement) => {
+  const mediaState = await page
+    .locator('audio[aria-label="Original audio"]')
+    .evaluate((audioElement) => {
     const audio = audioElement as HTMLAudioElement;
 
     return {
       duration: audio.duration,
       src: audio.currentSrc
     };
-  });
+    });
 
   expect(mediaState.src).toContain("/media/");
   expect(mediaState.duration).toBeGreaterThan(0);

@@ -6,6 +6,7 @@ import {
   parseStoredBeatGrid,
   type BeatGrid
 } from "./beatAnalysis.js";
+import { isStemName, type StemName } from "./stemSeparation.js";
 
 export type LibrarySourceType = "upload" | "youtube" | "imported";
 
@@ -26,8 +27,31 @@ export type LibraryTrackSummary = {
   updatedAt: string;
 };
 
+export type LibrarySeparationStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type LibrarySeparation = {
+  createdAt: string;
+  error: string | null;
+  mediaUrl: string | null;
+  status: LibrarySeparationStatus;
+  targetStem: StemName;
+  updatedAt: string;
+};
+
 export type LibraryTrack = LibraryTrackSummary & {
   markers: LibraryMarker[];
+  separation: LibrarySeparation | null;
+};
+
+export type IncompleteLibrarySeparation = {
+  inputFilename: string;
+  outputFilename: string;
+  targetStem: StemName;
+  trackId: string;
 };
 
 export type LibraryBeatGridReference = {
@@ -136,6 +160,43 @@ function rowToClickTrack(row: Record<string, unknown>): LibraryClickTrack {
   };
 }
 
+function toSeparationStatus(value: string): LibrarySeparationStatus {
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Invalid separation status: ${value}`);
+}
+
+function rowToSeparation(row: Record<string, unknown>): LibrarySeparation {
+  const status = toSeparationStatus(requireString(row, "status"));
+  const targetStem = requireString(row, "target_stem");
+  const mediaFilename =
+    typeof row.media_filename === "string" ? row.media_filename : null;
+  const error = typeof row.error === "string" ? row.error : null;
+
+  if (!isStemName(targetStem)) {
+    throw new Error(`Invalid separation stem: ${targetStem}`);
+  }
+
+  return {
+    createdAt: requireString(row, "created_at"),
+    error,
+    mediaUrl:
+      status === "completed" && mediaFilename
+        ? toMediaUrl(mediaFilename)
+        : null,
+    status,
+    targetStem,
+    updatedAt: requireString(row, "updated_at")
+  };
+}
+
 function createSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA foreign_keys = ON;
@@ -168,6 +229,16 @@ function createSchema(database: DatabaseSync) {
       reference_url TEXT NOT NULL,
       reference_title TEXT NOT NULL,
       reference_duration REAL NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS track_separations (
+      track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+      target_stem TEXT NOT NULL,
+      status TEXT NOT NULL,
+      media_filename TEXT NOT NULL UNIQUE,
+      error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -243,7 +314,8 @@ export class LibraryStore {
 
     return {
       ...rowToTrackSummary(row),
-      markers: this.getMarkers(trackId)
+      markers: this.getMarkers(trackId),
+      separation: this.getSeparation(trackId)
     };
   }
 
@@ -253,6 +325,69 @@ export class LibraryStore {
       .get(trackId);
 
     return row ? requireString(row, "media_filename") : null;
+  }
+
+  getSeparation(trackId: string) {
+    const row = this.#database
+      .prepare(
+        `
+          SELECT
+            target_stem,
+            status,
+            media_filename,
+            error,
+            created_at,
+            updated_at
+          FROM track_separations
+          WHERE track_id = ?
+        `
+      )
+      .get(trackId);
+
+    return row ? rowToSeparation(row) : null;
+  }
+
+  getSeparationMediaFilename(trackId: string) {
+    const row = this.#database
+      .prepare(
+        "SELECT media_filename FROM track_separations WHERE track_id = ?"
+      )
+      .get(trackId);
+
+    return row ? requireString(row, "media_filename") : null;
+  }
+
+  listIncompleteSeparations(): IncompleteLibrarySeparation[] {
+    const rows = this.#database
+      .prepare(
+        `
+          SELECT
+            track_separations.track_id,
+            track_separations.target_stem,
+            track_separations.media_filename AS output_filename,
+            tracks.media_filename AS input_filename
+          FROM track_separations
+          INNER JOIN tracks ON tracks.id = track_separations.track_id
+          WHERE track_separations.status IN ('queued', 'running')
+          ORDER BY track_separations.created_at ASC
+        `
+      )
+      .all();
+
+    return rows.map((row) => {
+      const targetStem = requireString(row, "target_stem");
+
+      if (!isStemName(targetStem)) {
+        throw new Error(`Invalid separation stem: ${targetStem}`);
+      }
+
+      return {
+        inputFilename: requireString(row, "input_filename"),
+        outputFilename: requireString(row, "output_filename"),
+        targetStem,
+        trackId: requireString(row, "track_id")
+      };
+    });
   }
 
   createTrack(input: CreateTrackInput) {
@@ -293,6 +428,65 @@ export class LibraryStore {
     }
 
     return track;
+  }
+
+  createSeparation({
+    mediaFilename,
+    targetStem,
+    trackId
+  }: {
+    mediaFilename: string;
+    targetStem: StemName;
+    trackId: string;
+  }) {
+    if (!this.getMediaFilename(trackId)) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          INSERT INTO track_separations (
+            track_id,
+            target_stem,
+            status,
+            media_filename,
+            error,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, 'queued', ?, NULL, ?, ?)
+        `
+      )
+      .run(trackId, targetStem, mediaFilename, now, now);
+
+    return this.getTrack(trackId);
+  }
+
+  updateSeparationStatus({
+    error,
+    status,
+    trackId
+  }: {
+    error?: string | null;
+    status: LibrarySeparationStatus;
+    trackId: string;
+  }) {
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          UPDATE track_separations
+          SET status = ?, error = ?, updated_at = ?
+          WHERE track_id = ?
+        `
+      )
+      .run(status, error ?? null, now, trackId);
+
+    return this.getTrack(trackId);
   }
 
   updateTrackDuration(trackId: string, duration: number) {
@@ -444,9 +638,11 @@ export class LibraryStore {
       return null;
     }
 
+    const separationMediaFilename = this.getSeparationMediaFilename(trackId);
+
     this.#database.prepare("DELETE FROM tracks WHERE id = ?").run(trackId);
 
-    return mediaFilename;
+    return { mediaFilename, separationMediaFilename };
   }
 
   importExistingMedia() {
@@ -454,8 +650,30 @@ export class LibraryStore {
       return;
     }
 
-    const selectTrack = this.#database.prepare(
-      "SELECT id FROM tracks WHERE media_filename = ?"
+    this.#database
+      .prepare(
+        `
+          DELETE FROM tracks
+          WHERE source_type = 'imported'
+            AND media_filename IN (
+              SELECT media_filename
+              FROM track_separations
+            )
+        `
+      )
+      .run();
+
+    const selectRegisteredMedia = this.#database.prepare(
+      `
+        SELECT 1
+        FROM tracks
+        WHERE media_filename = ?
+        UNION ALL
+        SELECT 1
+        FROM track_separations
+        WHERE media_filename = ?
+        LIMIT 1
+      `
     );
 
     for (const entry of readdirSync(this.mediaDir, { withFileTypes: true })) {
@@ -463,7 +681,7 @@ export class LibraryStore {
         continue;
       }
 
-      if (selectTrack.get(entry.name)) {
+      if (selectRegisteredMedia.get(entry.name, entry.name)) {
         continue;
       }
 

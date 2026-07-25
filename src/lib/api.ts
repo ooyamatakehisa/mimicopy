@@ -9,6 +9,7 @@ import {
   parseTrackListResponse,
   parseTrackResponse
 } from "./library";
+import type { StemName } from "./separation";
 
 export const tracksQueryKey = ["tracks"] as const;
 
@@ -68,9 +69,15 @@ export async function uploadTrack(file: File) {
   return parseTrackResponse(body);
 }
 
-export async function convertYoutubeUrl(url: string) {
+export async function convertYoutubeUrl({
+  targetStem,
+  url
+}: {
+  targetStem: StemName | null;
+  url: string;
+}) {
   const response = await fetch("/api/youtube", {
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ targetStem, url }),
     headers: { "Content-Type": "application/json" },
     method: "POST"
   });
