@@ -129,6 +129,8 @@ async function mockYoutubeConversion(page: Page) {
       createdAt: now,
       error: null,
       mediaUrl: "/media/e2e-youtube-guitar.mp3",
+      remainderMediaUrl:
+        "/media/e2e-youtube-guitar-remainder.mp3",
       status: "completed",
       targetStem: "guitar",
       updatedAt: now
@@ -214,6 +216,16 @@ async function mockYoutubeConversion(page: Page) {
       status: 200
     });
   });
+  await page.route(
+    "**/media/e2e-youtube-guitar-remainder.mp3",
+    async (route) => {
+      await route.fulfill({
+        body: createToneWavBuffer(),
+        contentType: "audio/mpeg",
+        status: 200
+      });
+    }
+  );
 }
 
 test("loads audio and supports the main playback and marker workflow", async ({
@@ -431,6 +443,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
 
   await expect(mixer.getByLabel("原音 channel")).toBeVisible();
   await expect(mixer.getByLabel("ギター channel")).toBeVisible();
+  await expect(mixer.getByLabel("ギター以外 channel")).toBeVisible();
   await mixer.getByLabel("原音の音量").fill("40");
   await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
   await mixer.getByTitle("原音をミュート").click();
@@ -449,12 +462,15 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   const stemAudio = page.locator(
     'audio[aria-label="Separated stem audio"]'
   );
+  const remainderAudio = page.locator(
+    'audio[aria-label="Separated remainder audio"]'
+  );
 
   await expect
     .poll(async () => {
       return page.locator("audio").evaluateAll(
         (elements) =>
-          elements.length === 2 &&
+          elements.length === 3 &&
           elements.every(
             (element) =>
               (element as HTMLAudioElement).readyState >=
@@ -468,24 +484,44 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
 
     audio.play = () => Promise.resolve();
   });
+  await remainderAudio.evaluate((element) => {
+    const audio = element as HTMLAudioElement;
+
+    audio.play = () => Promise.resolve();
+  });
   await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio] =
-      elements as [HTMLAudioElement, HTMLAudioElement];
+    const [originalAudio, stemAudio, remainderAudio] =
+      elements as [
+        HTMLAudioElement,
+        HTMLAudioElement,
+        HTMLAudioElement
+      ];
 
     originalAudio.currentTime = 0.5;
     stemAudio.currentTime = 0.5;
+    remainderAudio.currentTime = 0.5;
     originalAudio.dispatchEvent(new Event("play"));
   });
   await expect(page.getByTitle("停止")).toBeVisible();
   await page.waitForTimeout(100);
   await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio] =
-      elements as [HTMLAudioElement, HTMLAudioElement];
+    const [originalAudio, stemAudio, remainderAudio] =
+      elements as [
+        HTMLAudioElement,
+        HTMLAudioElement,
+        HTMLAudioElement
+      ];
 
     stemAudio.dataset.seekEvents = "0";
+    remainderAudio.dataset.seekEvents = "0";
     stemAudio.addEventListener("seeking", () => {
       stemAudio.dataset.seekEvents = String(
         Number(stemAudio.dataset.seekEvents ?? "0") + 1
+      );
+    });
+    remainderAudio.addEventListener("seeking", () => {
+      remainderAudio.dataset.seekEvents = String(
+        Number(remainderAudio.dataset.seekEvents ?? "0") + 1
       );
     });
     originalAudio.currentTime = 0.4;
@@ -496,13 +532,21 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
         elements.map((element) => (element as HTMLAudioElement).currentTime)
       );
 
-      return Math.abs((times[0] ?? 0) - (times[1] ?? 0));
+      const clockTime = times[1] ?? 0;
+
+      return Math.max(
+        Math.abs((times[0] ?? 0) - clockTime),
+        Math.abs((times[2] ?? 0) - clockTime)
+      );
     })
     .toBeLessThan(0.075);
   await page.waitForTimeout(100);
   await expect(
     stemAudio
   ).toHaveAttribute("data-seek-events", "0");
+  await expect
+    .poll(async () => remainderAudio.getAttribute("data-seek-events"))
+    .toBe("0");
   await originalAudio.dispatchEvent("pause");
   await expect(page.getByTitle("再生")).toBeVisible();
 

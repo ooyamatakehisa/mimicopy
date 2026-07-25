@@ -14,6 +14,7 @@ export type StemName = (typeof stemNames)[number];
 export type SeparateAudioInput = {
   inputFilename: string;
   outputFilename: string;
+  remainderOutputFilename: string;
   targetStem: StemName;
 };
 
@@ -64,6 +65,7 @@ export function createStemSeparatorClient({
       body: JSON.stringify({
         input_filename: input.inputFilename,
         output_filename: input.outputFilename,
+        remainder_output_filename: input.remainderOutputFilename,
         target_stem: input.targetStem
       }),
       bodyTimeout: 0,

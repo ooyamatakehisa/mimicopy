@@ -279,6 +279,7 @@ describe("YouTube stem separation API", () => {
     const separationCalls: Array<{
       inputFilename: string;
       outputFilename: string;
+      remainderOutputFilename: string;
       targetStem: string;
     }> = [];
     const app = createApp({
@@ -300,6 +301,14 @@ describe("YouTube stem separation API", () => {
         await writeFile(
           path.join(storageDir, "media", input.outputFilename),
           new Uint8Array([4, 5, 6])
+        );
+        await writeFile(
+          path.join(
+            storageDir,
+            "media",
+            input.remainderOutputFilename
+          ),
+          new Uint8Array([7, 8, 9])
         );
       },
       storageDir
@@ -327,6 +336,7 @@ describe("YouTube stem separation API", () => {
           id: string;
           separation: {
             mediaUrl: string | null;
+            remainderMediaUrl: string | null;
             status: string;
             targetStem: string;
           };
@@ -336,6 +346,7 @@ describe("YouTube stem separation API", () => {
       expect(response.status).toBe(200);
       expect(body.track.separation).toMatchObject({
         mediaUrl: null,
+        remainderMediaUrl: null,
         status: "queued",
         targetStem: "guitar"
       });
@@ -344,6 +355,11 @@ describe("YouTube stem separation API", () => {
         expect(separationCalls).toHaveLength(1);
       });
       expect(separationCalls[0]).toMatchObject({
+        inputFilename: expect.stringMatching(/\.mp3$/),
+        outputFilename: expect.stringMatching(/-guitar\.mp3$/),
+        remainderOutputFilename: expect.stringMatching(
+          /-guitar-remainder\.mp3$/
+        ),
         targetStem: "guitar"
       });
 
@@ -361,7 +377,11 @@ describe("YouTube stem separation API", () => {
           `${baseUrl}/api/tracks/${body.track.id}`
         ).then((trackResponse) => trackResponse.json()) as {
           track: {
-            separation: { mediaUrl: string | null; status: string };
+            separation: {
+              mediaUrl: string | null;
+              remainderMediaUrl: string | null;
+              status: string;
+            };
           };
         };
 
@@ -369,6 +389,9 @@ describe("YouTube stem separation API", () => {
         expect(completedTrack.track.separation.mediaUrl).toMatch(
           /^\/media\/.+-guitar\.mp3$/
         );
+        expect(
+          completedTrack.track.separation.remainderMediaUrl
+        ).toMatch(/^\/media\/.+-guitar-remainder\.mp3$/);
       });
     } finally {
       finishSeparation?.();

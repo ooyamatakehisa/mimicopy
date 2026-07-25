@@ -3,6 +3,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLibraryStore } from "./libraryStore.js";
 
@@ -108,12 +109,14 @@ describe("LibraryStore", () => {
 
     const queuedTrack = store.createSeparation({
       mediaFilename: "phrase-guitar.mp3",
+      remainderMediaFilename: "phrase-guitar-remainder.mp3",
       targetStem: "guitar",
       trackId: track.id
     });
 
     expect(queuedTrack?.separation).toMatchObject({
       mediaUrl: null,
+      remainderMediaUrl: null,
       status: "queued",
       targetStem: "guitar"
     });
@@ -121,6 +124,7 @@ describe("LibraryStore", () => {
       {
         inputFilename: "phrase.mp3",
         outputFilename: "phrase-guitar.mp3",
+        remainderOutputFilename: "phrase-guitar-remainder.mp3",
         targetStem: "guitar",
         trackId: track.id
       }
@@ -133,6 +137,7 @@ describe("LibraryStore", () => {
 
     expect(completedTrack?.separation).toMatchObject({
       mediaUrl: "/media/phrase-guitar.mp3",
+      remainderMediaUrl: "/media/phrase-guitar-remainder.mp3",
       status: "completed",
       targetStem: "guitar"
     });
@@ -142,10 +147,79 @@ describe("LibraryStore", () => {
 
     expect(reopenedStore.getTrack(track.id)?.separation).toMatchObject({
       mediaUrl: "/media/phrase-guitar.mp3",
+      remainderMediaUrl: "/media/phrase-guitar-remainder.mp3",
       status: "completed",
       targetStem: "guitar"
     });
     reopenedStore.close();
+  });
+
+  it("migrates existing separations and queues their missing remainder", async () => {
+    const paths = await createTempStorage();
+    await mkdir(paths.mediaDir, { recursive: true });
+    const database = new DatabaseSync(paths.databasePath);
+    database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE tracks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        media_filename TEXT NOT NULL UNIQUE,
+        duration REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE track_separations (
+        track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+        target_stem TEXT NOT NULL,
+        status TEXT NOT NULL,
+        media_filename TEXT NOT NULL UNIQUE,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO tracks VALUES (
+        'track-1',
+        'Phrase',
+        'youtube',
+        'phrase.mp3',
+        10,
+        '2026-07-20T00:00:00.000Z',
+        '2026-07-20T00:00:00.000Z'
+      );
+      INSERT INTO track_separations VALUES (
+        'track-1',
+        'guitar',
+        'completed',
+        'phrase-guitar.mp3',
+        NULL,
+        '2026-07-20T00:00:00.000Z',
+        '2026-07-20T00:00:00.000Z'
+      );
+    `);
+    database.close();
+
+    const store = createLibraryStore(paths);
+    const separation = store.getTrack("track-1")?.separation;
+    const queued = store.listIncompleteSeparations();
+
+    expect(separation).toMatchObject({
+      mediaUrl: null,
+      remainderMediaUrl: null,
+      status: "queued",
+      targetStem: "guitar"
+    });
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({
+      inputFilename: "phrase.mp3",
+      outputFilename: "phrase-guitar.mp3",
+      targetStem: "guitar",
+      trackId: "track-1"
+    });
+    expect(queued[0]?.remainderOutputFilename).toMatch(
+      /-guitar-remainder\.mp3$/
+    );
+    store.close();
   });
 
   it("imports existing mp3 files from the media directory", async () => {
@@ -166,9 +240,10 @@ describe("LibraryStore", () => {
     store.close();
   });
 
-  it("keeps separated stems out of standalone library tracks", async () => {
+  it("keeps all separation outputs out of standalone library tracks", async () => {
     const paths = await createTempStorage();
     const stemFilename = "phrase-guitar.mp3";
+    const remainderFilename = "phrase-guitar-remainder.mp3";
     const store = createLibraryStore(paths);
     const track = store.createTrack({
       duration: 10,
@@ -179,6 +254,7 @@ describe("LibraryStore", () => {
 
     store.createSeparation({
       mediaFilename: stemFilename,
+      remainderMediaFilename: remainderFilename,
       targetStem: "guitar",
       trackId: track.id
     });
@@ -188,9 +264,19 @@ describe("LibraryStore", () => {
       sourceType: "imported",
       title: stemFilename
     });
-    expect(store.listTracks()).toHaveLength(2);
+    store.createTrack({
+      duration: 0,
+      mediaFilename: remainderFilename,
+      sourceType: "imported",
+      title: remainderFilename
+    });
+    expect(store.listTracks()).toHaveLength(3);
     await writeFile(
       path.join(paths.mediaDir, stemFilename),
+      new Uint8Array()
+    );
+    await writeFile(
+      path.join(paths.mediaDir, remainderFilename),
       new Uint8Array()
     );
     store.close();

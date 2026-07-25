@@ -14,6 +14,9 @@ type StemMixerProps = {
 export function StemMixer({ mixer, separation }: StemMixerProps) {
   const stemReady =
     separation.status === "completed" && Boolean(separation.mediaUrl);
+  const remainderReady =
+    separation.status === "completed" &&
+    Boolean(separation.remainderMediaUrl);
 
   return (
     <section
@@ -27,7 +30,7 @@ export function StemMixer({ mixer, separation }: StemMixerProps) {
         </div>
         <SeparationStatus separation={separation} />
       </div>
-      <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+      <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
         <MixerChannel
           channelId="original"
           disabled={false}
@@ -38,6 +41,12 @@ export function StemMixer({ mixer, separation }: StemMixerProps) {
           channelId="stem"
           disabled={!stemReady}
           label={stemLabels[separation.targetStem]}
+          mixer={mixer}
+        />
+        <MixerChannel
+          channelId="remainder"
+          disabled={!remainderReady}
+          label={`${stemLabels[separation.targetStem]}以外`}
           mixer={mixer}
         />
       </div>

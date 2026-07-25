@@ -8,7 +8,9 @@ from app.main import resolve_media_file
 from app.separator import (
     CHUNK_SAMPLES,
     SILENCE_RMS_THRESHOLD,
+    STEM_NAMES,
     is_effectively_silent,
+    select_target_and_remainder_spectra,
     segment_starts,
 )
 
@@ -49,3 +51,19 @@ class ServiceHelpersTest(TestCase):
 
         self.assertTrue(is_effectively_silent(silent))
         self.assertFalse(is_effectively_silent(audible))
+
+    def test_sums_every_non_target_model_output(self) -> None:
+        real = np.arange(len(STEM_NAMES), dtype=np.float32).reshape(
+            (len(STEM_NAMES), 1, 1, 1)
+        )
+        imag = real + 10
+
+        target, remainder = select_target_and_remainder_spectra(
+            real, imag, STEM_NAMES.index("guitar")
+        )
+
+        np.testing.assert_array_equal(target, np.array([[[4 + 14j]]]))
+        np.testing.assert_array_equal(
+            remainder,
+            np.array([[[11 + 61j]]]),
+        )

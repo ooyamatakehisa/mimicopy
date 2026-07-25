@@ -71,6 +71,7 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
   const createdAt = readString(value, "createdAt");
   const errorValue = value.error;
   const mediaUrlValue = value.mediaUrl;
+  const remainderMediaUrlValue = value.remainderMediaUrl;
   const status = readString(value, "status");
   const targetStem = readString(value, "targetStem");
   const updatedAt = readString(value, "updatedAt");
@@ -79,6 +80,8 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
     !createdAt ||
     (errorValue !== null && typeof errorValue !== "string") ||
     (mediaUrlValue !== null && typeof mediaUrlValue !== "string") ||
+    (remainderMediaUrlValue !== null &&
+      typeof remainderMediaUrlValue !== "string") ||
     !status ||
     !isSeparationStatus(status) ||
     !targetStem ||
@@ -92,6 +95,7 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
     createdAt,
     error: errorValue,
     mediaUrl: mediaUrlValue,
+    remainderMediaUrl: remainderMediaUrlValue,
     status,
     targetStem,
     updatedAt

@@ -9,6 +9,8 @@ type PlaybackAudioProps = {
   mediaUrl: string;
   originalVolume: number;
   playback: PlaybackState;
+  remainderMediaUrl: string | null;
+  remainderVolume: number;
   stemMediaUrl: string | null;
   stemVolume: number;
 };
@@ -17,6 +19,8 @@ export function PlaybackAudio({
   mediaUrl,
   originalVolume,
   playback,
+  remainderMediaUrl,
+  remainderVolume,
   stemMediaUrl,
   stemVolume
 }: PlaybackAudioProps) {
@@ -26,6 +30,7 @@ export function PlaybackAudio({
     markPaused,
     markPlaying,
     playbackRate,
+    remainderAudioRef,
     stemAudioRef,
     syncMediaDuration,
     syncMediaTime
@@ -54,16 +59,46 @@ export function PlaybackAudio({
   }, [playbackRate, stemAudioRef, stemMediaUrl, stemVolume]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    const stemAudio = stemAudioRef.current;
+    const remainderAudio = remainderAudioRef.current;
 
-    if (!audio || !stemAudio || !isPlaying) {
+    if (!remainderAudio) {
       return;
     }
 
-    stemAudio.currentTime = audio.currentTime;
-    void stemAudio.play().catch(() => undefined);
-  }, [audioRef, isPlaying, stemAudioRef, stemMediaUrl]);
+    remainderAudio.playbackRate = playbackRate;
+    remainderAudio.volume = remainderVolume;
+  }, [
+    playbackRate,
+    remainderAudioRef,
+    remainderMediaUrl,
+    remainderVolume
+  ]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    const auxiliaryAudio = [
+      stemAudioRef.current,
+      remainderAudioRef.current
+    ].filter(
+      (candidate): candidate is HTMLAudioElement => Boolean(candidate)
+    );
+
+    if (!audio || auxiliaryAudio.length === 0 || !isPlaying) {
+      return;
+    }
+
+    for (const auxiliary of auxiliaryAudio) {
+      auxiliary.currentTime = audio.currentTime;
+      void auxiliary.play().catch(() => undefined);
+    }
+  }, [
+    audioRef,
+    isPlaying,
+    remainderAudioRef,
+    remainderMediaUrl,
+    stemAudioRef,
+    stemMediaUrl
+  ]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -76,29 +111,46 @@ export function PlaybackAudio({
 
     const update = () => {
       const stemAudio = stemAudioRef.current;
+      const remainderAudio = remainderAudioRef.current;
       const preferredClock = getMixerPlaybackClock({
+        hasRemainder: Boolean(remainderAudio),
         hasStem: Boolean(stemAudio),
         originalVolume,
+        remainderVolume,
         stemVolume
       });
-      const useStemClock =
-        preferredClock === "stem" &&
-        stemAudio &&
-        stemAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
-      const clockAudio = useStemClock ? stemAudio : audio;
-      const followerAudio = useStemClock ? audio : stemAudio;
-      const followerVolume = useStemClock ? originalVolume : stemVolume;
+      const candidates = {
+        original: audio,
+        remainder: remainderAudio,
+        stem: stemAudio
+      };
+      const preferredAudio = candidates[preferredClock];
+      const clockAudio =
+        preferredAudio &&
+        preferredAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+          ? preferredAudio
+          : audio;
+      const followers = [
+        { audio, volume: originalVolume },
+        { audio: stemAudio, volume: stemVolume },
+        { audio: remainderAudio, volume: remainderVolume }
+      ];
 
       syncMediaTime(clockAudio.currentTime);
-      if (
-        followerAudio &&
-        followerAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-        shouldResyncMixerFollower({
-          driftSeconds: followerAudio.currentTime - clockAudio.currentTime,
-          followerVolume
-        })
-      ) {
-        followerAudio.currentTime = clockAudio.currentTime;
+      for (const follower of followers) {
+        if (
+          follower.audio &&
+          follower.audio !== clockAudio &&
+          follower.audio.readyState >=
+            HTMLMediaElement.HAVE_CURRENT_DATA &&
+          shouldResyncMixerFollower({
+            driftSeconds:
+              follower.audio.currentTime - clockAudio.currentTime,
+            followerVolume: follower.volume
+          })
+        ) {
+          follower.audio.currentTime = clockAudio.currentTime;
+        }
       }
 
       frameId = requestAnimationFrame(update);
@@ -113,6 +165,8 @@ export function PlaybackAudio({
     audioRef,
     isPlaying,
     originalVolume,
+    remainderAudioRef,
+    remainderVolume,
     stemAudioRef,
     stemVolume,
     syncMediaTime
@@ -130,6 +184,7 @@ export function PlaybackAudio({
         }}
         onEnded={() => {
           stemAudioRef.current?.pause();
+          remainderAudioRef.current?.pause();
           markPaused();
         }}
         onLoadedMetadata={(event) => {
@@ -137,6 +192,7 @@ export function PlaybackAudio({
         }}
         onPause={() => {
           stemAudioRef.current?.pause();
+          remainderAudioRef.current?.pause();
           markPaused();
         }}
         onPlay={markPlaying}
@@ -150,6 +206,21 @@ export function PlaybackAudio({
           aria-label="Separated stem audio"
           preload="auto"
           src={stemMediaUrl}
+          onLoadedMetadata={(event) => {
+            const audio = audioRef.current;
+
+            if (audio) {
+              event.currentTarget.currentTime = audio.currentTime;
+            }
+          }}
+        />
+      ) : null}
+      {remainderMediaUrl ? (
+        <audio
+          ref={remainderAudioRef}
+          aria-label="Separated remainder audio"
+          preload="auto"
+          src={remainderMediaUrl}
           onLoadedMetadata={(event) => {
             const audio = audioRef.current;
 

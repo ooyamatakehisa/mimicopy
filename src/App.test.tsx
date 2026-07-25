@@ -467,6 +467,7 @@ describe("App", () => {
           createdAt: baseTimestamp,
           error: null,
           mediaUrl: "/media/track-1-guitar.mp3",
+          remainderMediaUrl: "/media/track-1-guitar-remainder.mp3",
           status: "completed",
           targetStem: "guitar",
           updatedAt: baseTimestamp
@@ -485,9 +486,12 @@ describe("App", () => {
     const originalVolume = within(mixer).getByLabelText("原音の音量");
     const audios = container.querySelectorAll("audio");
 
-    expect(audios).toHaveLength(2);
+    expect(audios).toHaveLength(3);
     expect(within(mixer).getByLabelText("原音 channel")).toBeVisible();
     expect(within(mixer).getByLabelText("ギター channel")).toBeVisible();
+    expect(
+      within(mixer).getByLabelText("ギター以外 channel")
+    ).toBeVisible();
 
     fireEvent.change(originalVolume, { target: { value: "35" } });
     await waitFor(() => {
@@ -498,11 +502,19 @@ describe("App", () => {
     await waitFor(() => {
       expect(audios[0]?.volume).toBe(0);
       expect(audios[1]?.volume).toBe(1);
+      expect(audios[2]?.volume).toBe(0);
     });
 
     fireEvent.click(within(mixer).getByTitle("ギターをミュート"));
     await waitFor(() => {
       expect(audios[1]?.volume).toBe(0);
+    });
+
+    fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
+    fireEvent.click(within(mixer).getByTitle("ギター以外をミュート"));
+    await waitFor(() => {
+      expect(audios[0]?.volume).toBeCloseTo(0.35);
+      expect(audios[2]?.volume).toBe(0);
     });
   });
 

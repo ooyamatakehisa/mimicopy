@@ -206,6 +206,8 @@ function TrackEditor({
   const transpose = useTranspose();
   const pitchShift = useAudioPitchShift({
     playback,
+    remainderMediaUrl:
+      track.separation?.remainderMediaUrl ?? null,
     semitones: transpose.semitones,
     stemMediaUrl: track.separation?.mediaUrl ?? null
   });
@@ -282,6 +284,10 @@ function TrackEditor({
         mediaUrl={track.mediaUrl}
         originalVolume={mixer.originalVolume}
         playback={playback}
+        remainderMediaUrl={
+          track.separation?.remainderMediaUrl ?? null
+        }
+        remainderVolume={mixer.remainderVolume}
         stemMediaUrl={track.separation?.mediaUrl ?? null}
         stemVolume={mixer.stemVolume}
       />

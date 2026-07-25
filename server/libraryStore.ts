@@ -37,6 +37,7 @@ export type LibrarySeparation = {
   createdAt: string;
   error: string | null;
   mediaUrl: string | null;
+  remainderMediaUrl: string | null;
   status: LibrarySeparationStatus;
   targetStem: StemName;
   updatedAt: string;
@@ -50,6 +51,7 @@ export type LibraryTrack = LibraryTrackSummary & {
 export type IncompleteLibrarySeparation = {
   inputFilename: string;
   outputFilename: string;
+  remainderOutputFilename: string;
   targetStem: StemName;
   trackId: string;
 };
@@ -204,6 +206,10 @@ function rowToSeparation(row: Record<string, unknown>): LibrarySeparation {
   const targetStem = requireString(row, "target_stem");
   const mediaFilename =
     typeof row.media_filename === "string" ? row.media_filename : null;
+  const remainderMediaFilename =
+    typeof row.remainder_media_filename === "string"
+      ? row.remainder_media_filename
+      : null;
   const error = typeof row.error === "string" ? row.error : null;
 
   if (!isStemName(targetStem)) {
@@ -216,6 +222,10 @@ function rowToSeparation(row: Record<string, unknown>): LibrarySeparation {
     mediaUrl:
       status === "completed" && mediaFilename
         ? toMediaUrl(mediaFilename)
+        : null,
+    remainderMediaUrl:
+      status === "completed" && remainderMediaFilename
+        ? toMediaUrl(remainderMediaFilename)
         : null,
     status,
     targetStem,
@@ -263,10 +273,31 @@ function createSchema(database: DatabaseSync) {
       target_stem TEXT NOT NULL,
       status TEXT NOT NULL,
       media_filename TEXT NOT NULL UNIQUE,
+      remainder_media_filename TEXT UNIQUE,
       error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+  `);
+
+  const separationColumns = database
+    .prepare("PRAGMA table_info(track_separations)")
+    .all();
+  const hasRemainderMediaFilename = separationColumns.some(
+    (column) => column.name === "remainder_media_filename"
+  );
+
+  if (!hasRemainderMediaFilename) {
+    database.exec(
+      "ALTER TABLE track_separations ADD COLUMN remainder_media_filename TEXT"
+    );
+  }
+
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      track_separations_remainder_media_filename_index
+    ON track_separations(remainder_media_filename)
+    WHERE remainder_media_filename IS NOT NULL;
   `);
 }
 
@@ -360,6 +391,7 @@ export class LibraryStore {
             target_stem,
             status,
             media_filename,
+            remainder_media_filename,
             error,
             created_at,
             updated_at
@@ -372,14 +404,66 @@ export class LibraryStore {
     return row ? rowToSeparation(row) : null;
   }
 
-  getSeparationMediaFilename(trackId: string) {
+  getSeparationMediaFilenames(trackId: string) {
     const row = this.#database
       .prepare(
-        "SELECT media_filename FROM track_separations WHERE track_id = ?"
+        `
+          SELECT media_filename, remainder_media_filename
+          FROM track_separations
+          WHERE track_id = ?
+        `
       )
       .get(trackId);
 
-    return row ? requireString(row, "media_filename") : null;
+    if (!row) {
+      return null;
+    }
+
+    return {
+      mediaFilename: requireString(row, "media_filename"),
+      remainderMediaFilename:
+        typeof row.remainder_media_filename === "string"
+          ? row.remainder_media_filename
+          : null
+    };
+  }
+
+  queueMissingSeparationRemainders() {
+    const rows = this.#database
+      .prepare(
+        `
+          SELECT track_id, target_stem
+          FROM track_separations
+          WHERE remainder_media_filename IS NULL
+        `
+      )
+      .all();
+    const update = this.#database.prepare(
+      `
+        UPDATE track_separations
+        SET
+          remainder_media_filename = ?,
+          status = 'queued',
+          error = NULL,
+          updated_at = ?
+        WHERE track_id = ?
+      `
+    );
+    const now = new Date().toISOString();
+
+    for (const row of rows) {
+      const targetStem = requireString(row, "target_stem");
+
+      if (!isStemName(targetStem)) {
+        throw new Error(`Invalid separation stem: ${targetStem}`);
+      }
+
+      update.run(
+        `${randomUUID()}-${targetStem}-remainder.mp3`,
+        now,
+        requireString(row, "track_id")
+      );
+    }
   }
 
   listIncompleteSeparations(): IncompleteLibrarySeparation[] {
@@ -390,6 +474,8 @@ export class LibraryStore {
             track_separations.track_id,
             track_separations.target_stem,
             track_separations.media_filename AS output_filename,
+            track_separations.remainder_media_filename
+              AS remainder_output_filename,
             tracks.media_filename AS input_filename
           FROM track_separations
           INNER JOIN tracks ON tracks.id = track_separations.track_id
@@ -409,6 +495,10 @@ export class LibraryStore {
       return {
         inputFilename: requireString(row, "input_filename"),
         outputFilename: requireString(row, "output_filename"),
+        remainderOutputFilename: requireString(
+          row,
+          "remainder_output_filename"
+        ),
         targetStem,
         trackId: requireString(row, "track_id")
       };
@@ -598,10 +688,12 @@ export class LibraryStore {
 
   createSeparation({
     mediaFilename,
+    remainderMediaFilename,
     targetStem,
     trackId
   }: {
     mediaFilename: string;
+    remainderMediaFilename: string;
     targetStem: StemName;
     trackId: string;
   }) {
@@ -619,14 +711,22 @@ export class LibraryStore {
             target_stem,
             status,
             media_filename,
+            remainder_media_filename,
             error,
             created_at,
             updated_at
           )
-          VALUES (?, ?, 'queued', ?, NULL, ?, ?)
+          VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?)
         `
       )
-      .run(trackId, targetStem, mediaFilename, now, now);
+      .run(
+        trackId,
+        targetStem,
+        mediaFilename,
+        remainderMediaFilename,
+        now,
+        now
+      );
 
     return this.getTrack(trackId);
   }
@@ -745,11 +845,11 @@ export class LibraryStore {
       return null;
     }
 
-    const separationMediaFilename = this.getSeparationMediaFilename(trackId);
+    const separationMedia = this.getSeparationMediaFilenames(trackId);
 
     this.#database.prepare("DELETE FROM tracks WHERE id = ?").run(trackId);
 
-    return { mediaFilename, separationMediaFilename };
+    return { mediaFilename, separationMedia };
   }
 
   importExistingMedia() {
@@ -765,6 +865,9 @@ export class LibraryStore {
             AND media_filename IN (
               SELECT media_filename
               FROM track_separations
+              UNION
+              SELECT remainder_media_filename
+              FROM track_separations
             )
         `
       )
@@ -779,6 +882,7 @@ export class LibraryStore {
         SELECT 1
         FROM track_separations
         WHERE media_filename = ?
+           OR remainder_media_filename = ?
         LIMIT 1
       `
     );
@@ -788,7 +892,7 @@ export class LibraryStore {
         continue;
       }
 
-      if (selectRegisteredMedia.get(entry.name, entry.name)) {
+      if (selectRegisteredMedia.get(entry.name, entry.name, entry.name)) {
         continue;
       }
 
@@ -825,6 +929,7 @@ export class LibraryStore {
 
 export function createLibraryStore(options: LibraryStoreOptions) {
   const store = new LibraryStore(options);
+  store.queueMissingSeparationRemainders();
   store.importExistingMedia();
 
   return store;

@@ -546,11 +546,13 @@ export function createApp(options: CreateAppOptions = {}) {
   const scheduleSeparation = ({
     inputFilename,
     outputFilename,
+    remainderOutputFilename,
     targetStem,
     trackId
   }: {
     inputFilename: string;
     outputFilename: string;
+    remainderOutputFilename: string;
     targetStem: StemName;
     trackId: string;
   }) => {
@@ -565,11 +567,15 @@ export function createApp(options: CreateAppOptions = {}) {
         await separateAudio({
           inputFilename,
           outputFilename,
+          remainderOutputFilename,
           targetStem
         });
 
         if (!store.getMediaFilename(trackId)) {
           await rm(path.join(paths.mediaDir, outputFilename), {
+            force: true
+          }).catch(() => undefined);
+          await rm(path.join(paths.mediaDir, remainderOutputFilename), {
             force: true
           }).catch(() => undefined);
           return;
@@ -578,6 +584,9 @@ export function createApp(options: CreateAppOptions = {}) {
         store.updateSeparationStatus({ status: "completed", trackId });
       } catch (error) {
         await rm(path.join(paths.mediaDir, outputFilename), {
+          force: true
+        }).catch(() => undefined);
+        await rm(path.join(paths.mediaDir, remainderOutputFilename), {
           force: true
         }).catch(() => undefined);
         store.updateSeparationStatus({
@@ -837,13 +846,25 @@ export function createApp(options: CreateAppOptions = {}) {
         await rm(path.join(paths.mediaDir, deletedMedia.mediaFilename), {
           force: true
         }).catch(() => undefined);
-        if (deletedMedia.separationMediaFilename) {
+        if (deletedMedia.separationMedia) {
           await rm(
-            path.join(paths.mediaDir, deletedMedia.separationMediaFilename),
+            path.join(
+              paths.mediaDir,
+              deletedMedia.separationMedia.mediaFilename
+            ),
             {
               force: true
             }
           ).catch(() => undefined);
+          if (deletedMedia.separationMedia.remainderMediaFilename) {
+            await rm(
+              path.join(
+                paths.mediaDir,
+                deletedMedia.separationMedia.remainderMediaFilename
+              ),
+              { force: true }
+            ).catch(() => undefined);
+          }
         }
 
         response.json({ ok: true });
@@ -881,8 +902,11 @@ export function createApp(options: CreateAppOptions = {}) {
 
         if (targetStem) {
           const separationFilename = `${randomUUID()}-${targetStem}.mp3`;
+          const remainderFilename =
+            `${randomUUID()}-${targetStem}-remainder.mp3`;
           const trackWithSeparation = store.createSeparation({
             mediaFilename: separationFilename,
+            remainderMediaFilename: remainderFilename,
             targetStem,
             trackId: track.id
           });
@@ -895,6 +919,7 @@ export function createApp(options: CreateAppOptions = {}) {
           scheduleSeparation({
             inputFilename: fileName,
             outputFilename: separationFilename,
+            remainderOutputFilename: remainderFilename,
             targetStem,
             trackId: track.id
           });

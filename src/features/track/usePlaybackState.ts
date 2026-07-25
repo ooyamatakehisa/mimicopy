@@ -24,6 +24,7 @@ export function usePlaybackState({
   trackId: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const remainderAudioRef = useRef<HTMLAudioElement>(null);
   const stemAudioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const queryClient = useQueryClient();
@@ -56,6 +57,9 @@ export function usePlaybackState({
       if (stemAudioRef.current) {
         stemAudioRef.current.currentTime = nextTime;
       }
+      if (remainderAudioRef.current) {
+        remainderAudioRef.current.currentTime = nextTime;
+      }
 
       setCurrentTime(nextTime);
     },
@@ -78,15 +82,22 @@ export function usePlaybackState({
 
     if (audio.paused) {
       const stemAudio = stemAudioRef.current;
+      const remainderAudio = remainderAudioRef.current;
 
       if (stemAudio) {
         stemAudio.currentTime = audio.currentTime;
+      }
+      if (remainderAudio) {
+        remainderAudio.currentTime = audio.currentTime;
       }
 
       const playRequests: Promise<unknown>[] = [audio.play()];
 
       if (stemAudio) {
         playRequests.push(stemAudio.play());
+      }
+      if (remainderAudio) {
+        playRequests.push(remainderAudio.play());
       }
       if (audioContextRef.current?.state === "suspended") {
         playRequests.push(audioContextRef.current.resume());
@@ -95,6 +106,7 @@ export function usePlaybackState({
       void Promise.all(playRequests).catch((error: unknown) => {
         audio.pause();
         stemAudio?.pause();
+        remainderAudio?.pause();
         setPlaybackError(getErrorMessage(error, "再生に失敗しました。"));
       });
       return;
@@ -102,6 +114,7 @@ export function usePlaybackState({
 
     audio.pause();
     stemAudioRef.current?.pause();
+    remainderAudioRef.current?.pause();
   }, []);
 
   const changePlaybackRate = useCallback(
@@ -156,6 +169,7 @@ export function usePlaybackState({
       markPlaying,
       playbackError,
       playbackRate,
+      remainderAudioRef,
       seekBySeconds,
       seekTo,
       stemAudioRef,
@@ -173,6 +187,7 @@ export function usePlaybackState({
       markPlaying,
       playbackError,
       playbackRate,
+      remainderAudioRef,
       seekBySeconds,
       seekTo,
       stemAudioRef,

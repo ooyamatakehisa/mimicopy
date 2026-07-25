@@ -57,6 +57,7 @@ export function useStemMixer() {
     () => ({
       channels,
       originalVolume: getEffectiveMixerVolume(channels, "original"),
+      remainderVolume: getEffectiveMixerVolume(channels, "remainder"),
       setVolume,
       stemVolume: getEffectiveMixerVolume(channels, "stem"),
       toggleMute,

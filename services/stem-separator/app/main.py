@@ -18,12 +18,14 @@ StemName = Literal["bass", "drums", "other", "vocals", "guitar", "piano"]
 class SeparationRequest(BaseModel):
     input_filename: str
     output_filename: str
+    remainder_output_filename: str
     target_stem: StemName
 
 
 class SeparationResponse(BaseModel):
     elapsed_seconds: float
     output_filename: str
+    remainder_output_filename: str
     target_stem: StemName
 
 
@@ -79,32 +81,41 @@ async def separate(request: SeparationRequest) -> SeparationResponse:
     try:
         input_path = resolve_media_file(media_dir, request.input_filename)
         output_path = resolve_media_file(media_dir, request.output_filename)
+        remainder_output_path = resolve_media_file(
+            media_dir, request.remainder_output_filename
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     if not input_path.is_file():
         raise HTTPException(status_code=404, detail="Input MP3 was not found.")
-    if input_path == output_path:
+    if len({input_path, output_path, remainder_output_path}) != 3:
         raise HTTPException(
             status_code=400,
-            detail="Input and output filenames must be different.",
+            detail="Input and output filenames must all be different.",
         )
 
     separator: StemSeparator = app.state.separator
     lock: asyncio.Lock = app.state.separation_lock
     try:
         async with lock:
-            if output_path.is_file():
+            if output_path.is_file() and remainder_output_path.is_file():
                 return SeparationResponse(
                     elapsed_seconds=0,
                     output_filename=request.output_filename,
+                    remainder_output_filename=(
+                        request.remainder_output_filename
+                    ),
                     target_stem=request.target_stem,
                 )
 
+            output_path.unlink(missing_ok=True)
+            remainder_output_path.unlink(missing_ok=True)
             elapsed_seconds = await asyncio.to_thread(
                 separator.separate_file,
                 input_path=input_path,
                 output_path=output_path,
+                remainder_output_path=remainder_output_path,
                 target_stem=request.target_stem,
             )
     except Exception as error:
@@ -113,5 +124,6 @@ async def separate(request: SeparationRequest) -> SeparationResponse:
     return SeparationResponse(
         elapsed_seconds=elapsed_seconds,
         output_filename=request.output_filename,
+        remainder_output_filename=request.remainder_output_filename,
         target_stem=request.target_stem,
     )

@@ -1,8 +1,9 @@
 # Mimicopy
 
 耳コピしやすい簡易DAW風Webアプリです。MP3アップロード、YouTube
-URLからのmp3変換、任意の1ステムの音源分離、同期ミキサー、波形表示、
-YouTube風ショートカット、任意時刻マーカーに対応しています。
+URLからのmp3変換、任意の1ステムと残りの全ステムの音源分離、
+同期ミキサー、波形表示、YouTube風ショートカット、任意時刻マーカーに
+対応しています。
 
 ## Requirements
 
@@ -86,15 +87,15 @@ When importing a YouTube URL, choose either `音源分離なし` or one target:
 - ピアノ
 
 The original MP3 becomes available first. If a stem was requested, the track
-page polls the background job until the separated MP3 is ready. The mixer then
-plays the original and separated audio together with independent volume,
-mute, and solo controls.
+page polls the background job until both separated MP3s are ready. The mixer
+then plays the original, requested stem, and the sum of every other stem
+together with independent volume, mute, and solo controls.
 
-The TypeScript API only queues the requested stem and stores its status. All
-model loading, STFT/iSTFT, OpenVINO inference, and MP3 encoding live in the
+The TypeScript API only queues the requested outputs and stores their status.
+All model loading, STFT/iSTFT, OpenVINO inference, and MP3 encoding live in the
 isolated `services/stem-separator` Python container. The container uses the
-official BS-RoFormer SW 6-stem FP16 ONNX model but reconstructs and saves only
-the requested output.
+official BS-RoFormer SW 6-stem FP16 ONNX model. A single inference reconstructs
+the requested output and sums the other five model outputs into a second MP3.
 
 The first container start downloads the approximately 353 MB model to
 `storage/models` and compiles an OpenVINO cache under

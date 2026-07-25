@@ -1,4 +1,4 @@
-export type MixerChannelId = "original" | "stem";
+export type MixerChannelId = "original" | "remainder" | "stem";
 
 export type MixerChannel = {
   muted: boolean;
@@ -13,6 +13,11 @@ const mutedFollowerSyncThreshold = 0.075;
 
 export const defaultMixerState: MixerState = {
   original: {
+    muted: false,
+    solo: false,
+    volume: 1
+  },
+  remainder: {
     muted: false,
     solo: false,
     volume: 1
@@ -47,17 +52,29 @@ export function getEffectiveMixerVolume(
 }
 
 export function getMixerPlaybackClock({
+  hasRemainder,
   hasStem,
   originalVolume,
+  remainderVolume,
   stemVolume
 }: {
+  hasRemainder: boolean;
   hasStem: boolean;
   originalVolume: number;
+  remainderVolume: number;
   stemVolume: number;
 }): MixerChannelId {
-  return hasStem && originalVolume === 0 && stemVolume > 0
-    ? "stem"
-    : "original";
+  if (originalVolume > 0) {
+    return "original";
+  }
+  if (hasStem && stemVolume > 0) {
+    return "stem";
+  }
+  if (hasRemainder && remainderVolume > 0) {
+    return "remainder";
+  }
+
+  return "original";
 }
 
 export function shouldResyncMixerFollower({

@@ -114,6 +114,26 @@ def is_effectively_silent(audio: np.ndarray) -> bool:
     return rms < SILENCE_RMS_THRESHOLD
 
 
+def select_target_and_remainder_spectra(
+    real: np.ndarray,
+    imag: np.ndarray,
+    target_index: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if real.shape != imag.shape or real.shape[0] != len(STEM_NAMES):
+        raise ValueError("Unexpected model output spectrum shape.")
+
+    remainder_indices = [
+        index
+        for index in range(len(STEM_NAMES))
+        if index != target_index
+    ]
+    target = real[target_index] + (1j * imag[target_index])
+    remainder = np.sum(real[remainder_indices], axis=0) + (
+        1j * np.sum(imag[remainder_indices], axis=0)
+    )
+    return target, remainder
+
+
 def run_ffmpeg(arguments: list[str]) -> None:
     completed = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments],
@@ -155,8 +175,13 @@ def decode_audio(input_path: Path, working_dir: Path) -> np.ndarray:
     return np.ascontiguousarray(audio, dtype=np.float32)
 
 
-def encode_mp3(audio: np.ndarray, output_path: Path, working_dir: Path) -> None:
-    wav_path = working_dir / "separated.wav"
+def encode_mp3(
+    audio: np.ndarray,
+    output_path: Path,
+    working_dir: Path,
+    wav_filename: str,
+) -> None:
+    wav_path = working_dir / wav_filename
     partial_path = output_path.with_suffix(f"{output_path.suffix}.partial")
     sf.write(wav_path, audio.T, SAMPLE_RATE, subtype="FLOAT")
     try:
@@ -264,10 +289,15 @@ class StemSeparator:
         *,
         input_path: Path,
         output_path: Path,
+        remainder_output_path: Path,
         target_stem: str,
     ) -> float:
         if target_stem not in STEM_NAMES:
             raise ValueError(f"Unsupported target stem: {target_stem}")
+        if output_path == remainder_output_path:
+            raise ValueError(
+                "Target and remainder output paths must be different."
+            )
 
         started = time.monotonic()
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,21 +306,46 @@ class StemSeparator:
         ) as directory:
             working_dir = Path(directory)
             audio = decode_audio(input_path, working_dir)
-            separated = self._separate_target(audio, target_stem)
-            if not np.isfinite(separated).all():
+            separated, remainder = self._separate_target_and_remainder(
+                audio, target_stem
+            )
+            if not np.isfinite(separated).all() or not np.isfinite(
+                remainder
+            ).all():
                 raise RuntimeError("Separated audio contains NaN or Inf values.")
-            encode_mp3(separated, output_path, working_dir)
+            try:
+                encode_mp3(
+                    separated,
+                    output_path,
+                    working_dir,
+                    "target.wav",
+                )
+                encode_mp3(
+                    remainder,
+                    remainder_output_path,
+                    working_dir,
+                    "remainder.wav",
+                )
+            except Exception:
+                output_path.unlink(missing_ok=True)
+                remainder_output_path.unlink(missing_ok=True)
+                raise
 
         return time.monotonic() - started
 
-    def _separate_target(
+    def _separate_target_and_remainder(
         self, audio: np.ndarray, target_stem: str
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         target_index = STEM_NAMES.index(target_stem)
         overlap_samples = int(CHUNK_SAMPLES * self.overlap)
         sample_count = audio.shape[0]
         starts = segment_starts(sample_count, overlap_samples)
-        output = np.zeros((NUM_CHANNELS, sample_count), dtype=np.float32)
+        target_output = np.zeros(
+            (NUM_CHANNELS, sample_count), dtype=np.float32
+        )
+        remainder_output = np.zeros(
+            (NUM_CHANNELS, sample_count), dtype=np.float32
+        )
 
         for segment_index, start in enumerate(starts):
             segment_started = time.monotonic()
@@ -309,6 +364,9 @@ class StemSeparator:
                 separated = np.zeros(
                     (NUM_CHANNELS, CHUNK_SAMPLES), dtype=np.float32
                 )
+                remainder = np.zeros(
+                    (NUM_CHANNELS, CHUNK_SAMPLES), dtype=np.float32
+                )
                 segment_result = "silent segment skipped"
             else:
                 spectrum = stft_stereo(
@@ -324,7 +382,7 @@ class StemSeparator:
                     ),
                 }
 
-                def infer_target(
+                def infer_stems(
                     compiled: CompiledModel,
                 ) -> tuple[np.ndarray, np.ndarray]:
                     result = compiled(model_inputs)
@@ -333,11 +391,11 @@ class StemSeparator:
                         for model_output, value in result.items()
                     }
                     return (
-                        result_by_name["out_spec_real"][0, target_index],
-                        result_by_name["out_spec_imag"][0, target_index],
+                        result_by_name["out_spec_real"][0],
+                        result_by_name["out_spec_imag"][0],
                     )
 
-                real, imag = infer_target(self.compiled)
+                real, imag = infer_stems(self.compiled)
                 spectrum_is_finite = bool(
                     np.isfinite(real).all() and np.isfinite(imag).all()
                 )
@@ -349,7 +407,7 @@ class StemSeparator:
                         "non-finite FP16 output; retrying with FP32.",
                         flush=True,
                     )
-                    real, imag = infer_target(self._get_fallback_compiled())
+                    real, imag = infer_stems(self._get_fallback_compiled())
                     spectrum_is_finite = bool(
                         np.isfinite(real).all()
                         and np.isfinite(imag).all()
@@ -363,9 +421,21 @@ class StemSeparator:
                         "FP32 fallback."
                     )
 
+                real = real.astype(np.float32, copy=False)
+                imag = imag.astype(np.float32, copy=False)
+                target_spectrum, remainder_spectrum = (
+                    select_target_and_remainder_spectra(
+                        real,
+                        imag,
+                        target_index,
+                    )
+                )
                 separated = istft_target(
-                    real.astype(np.float32, copy=False)
-                    + (1j * imag.astype(np.float32, copy=False)),
+                    target_spectrum,
+                    self.window,
+                )
+                remainder = istft_target(
+                    remainder_spectrum,
                     self.window,
                 )
                 segment_result = (
@@ -387,8 +457,11 @@ class StemSeparator:
                     _, fade_out = make_fades(next_overlap)
                     weights[length - next_overlap :] = fade_out
 
-            output[:, start : start + length] += (
+            target_output[:, start : start + length] += (
                 separated[:, :length] * weights[None, :]
+            )
+            remainder_output[:, start : start + length] += (
+                remainder[:, :length] * weights[None, :]
             )
             print(
                 f"{target_stem} segment {segment_index + 1}/{len(starts)} "
@@ -397,4 +470,4 @@ class StemSeparator:
                 flush=True,
             )
 
-        return output
+        return target_output, remainder_output

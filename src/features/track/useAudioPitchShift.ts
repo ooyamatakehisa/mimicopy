@@ -35,20 +35,25 @@ function getErrorMessage(error: unknown) {
 
 export function useAudioPitchShift({
   playback,
+  remainderMediaUrl,
   semitones,
   stemMediaUrl
 }: {
   playback: PlaybackState;
+  remainderMediaUrl: string | null;
   semitones: number;
   stemMediaUrl: string | null;
 }) {
   const graphRef = useRef<PitchShiftGraph | null>(null);
+  const remainderSourceRef =
+    useRef<MediaElementAudioSourceNode | null>(null);
   const stemSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [pitchShiftErrorMessage, setPitchShiftErrorMessage] = useState<
     string | null
   >(null);
   const hasStem = Boolean(stemMediaUrl);
+  const hasRemainder = Boolean(remainderMediaUrl);
 
   useEffect(() => {
     const audio = playback.audioRef.current;
@@ -131,6 +136,8 @@ export function useAudioPitchShift({
 
       stemSourceRef.current?.disconnect();
       stemSourceRef.current = null;
+      remainderSourceRef.current?.disconnect();
+      remainderSourceRef.current = null;
       graph.originalSource.disconnect();
       graph.effect.dispose();
       graphRef.current = null;
@@ -178,6 +185,40 @@ export function useAudioPitchShift({
       stemSourceRef.current = null;
     };
   }, [audioContext, hasStem, playback.stemAudioRef]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    const remainderAudio = playback.remainderAudioRef.current;
+
+    if (
+      !graph ||
+      !hasRemainder ||
+      !remainderAudio ||
+      remainderSourceRef.current
+    ) {
+      return undefined;
+    }
+
+    try {
+      const remainderSource =
+        graph.toneContext.createMediaElementSource(remainderAudio);
+
+      graph.connectSource(remainderSource, graph.effect);
+      remainderSourceRef.current = remainderSource;
+      setPitchShiftErrorMessage(null);
+    } catch (error) {
+      setPitchShiftErrorMessage(getErrorMessage(error));
+    }
+
+    return () => {
+      remainderSourceRef.current?.disconnect();
+      remainderSourceRef.current = null;
+    };
+  }, [
+    audioContext,
+    hasRemainder,
+    playback.remainderAudioRef
+  ]);
 
   useEffect(() => {
     if (semitones !== 0 && !getAudioContextConstructor()) {

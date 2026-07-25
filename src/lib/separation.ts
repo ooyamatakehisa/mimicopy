@@ -19,6 +19,7 @@ export type TrackSeparation = {
   createdAt: string;
   error: string | null;
   mediaUrl: string | null;
+  remainderMediaUrl: string | null;
   status: SeparationStatus;
   targetStem: StemName;
   updatedAt: string;
