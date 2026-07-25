@@ -3,8 +3,11 @@ import {
   Gauge,
   Link,
   MapPin,
+  Minus,
+  Music2,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Volume2,
   VolumeX,
@@ -20,9 +23,15 @@ import {
   maxWaveformZoom,
   minWaveformZoom
 } from "../../lib/waveform";
+import {
+  formatTransposeSemitones,
+  maxTransposeSemitones,
+  minTransposeSemitones
+} from "../../lib/transpose";
 import type { MarkersState } from "./useMarkersState";
 import type { ClickTrackState } from "./useClickTrack";
 import type { PlaybackState } from "./usePlaybackState";
+import type { TransposeState } from "./useTranspose";
 import type { WaveformViewportState } from "./useWaveformViewport";
 
 type TransportControlsProps = {
@@ -37,6 +46,7 @@ type TransportControlsProps = {
   onAnalyzeBeatGrid: (youtubeUrl: string) => void;
   onBeatReferenceUrlChange: (youtubeUrl: string) => void;
   playback: PlaybackState;
+  transpose: TransposeState;
   waveform: WaveformViewportState;
 };
 
@@ -52,6 +62,7 @@ export function TransportControls({
   onAnalyzeBeatGrid,
   onBeatReferenceUrlChange,
   playback,
+  transpose,
   waveform
 }: TransportControlsProps) {
   const trimmedBeatReferenceUrl = beatReferenceUrl.trim();
@@ -196,6 +207,37 @@ export function TransportControls({
           onClick={() => waveform.changeWaveformZoom("in")}
         >
           <ZoomIn size={17} />
+        </IconButton>
+      </div>
+
+      <div
+        className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
+        aria-label="Transpose"
+      >
+        <Music2 className="text-muted" size={18} aria-hidden="true" />
+        <IconButton
+          title="半音下げる"
+          disabled={transpose.semitones <= minTransposeSemitones}
+          onClick={() => transpose.changeTranspose("down")}
+        >
+          <Minus size={17} />
+        </IconButton>
+        <Button
+          className="h-10 min-w-12 px-2 tabular-nums"
+          title="転調を0に戻す"
+          aria-label={`転調 ${formatTransposeSemitones(
+            transpose.semitones
+          )} 半音。0に戻す`}
+          onClick={transpose.resetTranspose}
+        >
+          <strong>{formatTransposeSemitones(transpose.semitones)}</strong>
+        </Button>
+        <IconButton
+          title="半音上げる"
+          disabled={transpose.semitones >= maxTransposeSemitones}
+          onClick={() => transpose.changeTranspose("up")}
+        >
+          <Plus size={17} />
         </IconButton>
       </div>
 

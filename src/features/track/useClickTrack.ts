@@ -6,20 +6,12 @@ const LOOKAHEAD_SECONDS = 0.18;
 const SCHEDULE_INTERVAL_MS = 45;
 const SEEK_RESET_THRESHOLD_SECONDS = 0.35;
 
-type AudioContextConstructor = new () => AudioContext;
-
 type UseClickTrackOptions = {
+  audioContext: AudioContext | null;
   beatGrid: BeatGrid | null;
+  outputLatencySeconds: number;
   playback: PlaybackState;
 };
-
-function getAudioContextConstructor() {
-  const audioWindow = window as typeof window & {
-    webkitAudioContext?: AudioContextConstructor;
-  };
-
-  return window.AudioContext ?? audioWindow.webkitAudioContext ?? null;
-}
 
 function getBeatKey(beat: BeatPoint) {
   return `${beat.time.toFixed(3)}:${beat.position}`;
@@ -52,9 +44,12 @@ function scheduleClick({
   return oscillator;
 }
 
-export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+export function useClickTrack({
+  audioContext,
+  beatGrid,
+  outputLatencySeconds,
+  playback
+}: UseClickTrackOptions) {
   const lastMediaTimeRef = useRef(0);
   const scheduledBeatKeysRef = useRef(new Set<string>());
   const scheduledOscillatorsRef = useRef(new Map<string, OscillatorNode>());
@@ -83,41 +78,6 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
     scheduledBeatKeysRef.current.clear();
     lastMediaTimeRef.current = playback.currentTime;
   }, [cancelScheduledClicks, playback.currentTime]);
-  const ensureAudioContext = useCallback(() => {
-    const audio = playback.audioRef.current;
-
-    if (!audio) {
-      return null;
-    }
-
-    let audioContext = audioContextRef.current;
-
-    if (!audioContext) {
-      const AudioContextCtor = getAudioContextConstructor();
-
-      if (!AudioContextCtor) {
-        setClickErrorMessage("このブラウザではクリック音を生成できません。");
-        return null;
-      }
-
-      audioContext = new AudioContextCtor();
-      audioContextRef.current = audioContext;
-    }
-
-    if (!mediaSourceRef.current) {
-      try {
-        const mediaSource = audioContext.createMediaElementSource(audio);
-
-        mediaSource.connect(audioContext.destination);
-        mediaSourceRef.current = mediaSource;
-      } catch {
-        setClickErrorMessage("曲とクリック音を同期できませんでした。");
-        return null;
-      }
-    }
-
-    return audioContext;
-  }, [playback.audioRef]);
   const toggleClickTrack = useCallback(() => {
     setClickErrorMessage(null);
 
@@ -130,14 +90,18 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
       const nextValue = !currentValue;
 
       if (nextValue) {
-        void ensureAudioContext()?.resume().catch(() => {
-          setClickErrorMessage("クリック音の再生を開始できませんでした。");
-        });
+        if (!audioContext) {
+          setClickErrorMessage("クリック音の音声処理を準備できませんでした。");
+        } else {
+          void audioContext.resume().catch(() => {
+            setClickErrorMessage("クリック音の再生を開始できませんでした。");
+          });
+        }
       }
 
       return nextValue;
     });
-  }, [beats.length, ensureAudioContext]);
+  }, [audioContext, beats.length]);
 
   useEffect(() => {
     setIsClickEnabled(false);
@@ -146,22 +110,11 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
   }, [beatGrid, cancelScheduledClicks]);
 
   useEffect(() => {
-    return () => {
-      cancelScheduledClicks();
-      mediaSourceRef.current?.disconnect();
-      mediaSourceRef.current = null;
-      void audioContextRef.current?.close();
-      audioContextRef.current = null;
-    };
-  }, [cancelScheduledClicks]);
-
-  useEffect(() => {
     if (!isClickEnabled || !playback.isPlaying || beats.length === 0) {
       return undefined;
     }
 
     const audio = playback.audioRef.current;
-    const audioContext = ensureAudioContext();
 
     if (!audio || !audioContext) {
       return undefined;
@@ -205,7 +158,8 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
           beat,
           startAt:
             audioContext.currentTime +
-            Math.max(0, beat.time - currentTime) / playback.playbackRate
+            Math.max(0, beat.time - currentTime) / playback.playbackRate +
+            outputLatencySeconds
         });
         scheduledOscillatorsRef.current.set(beatKey, oscillator);
         oscillator.onended = () => {
@@ -227,8 +181,9 @@ export function useClickTrack({ beatGrid, playback }: UseClickTrackOptions) {
   }, [
     beats,
     cancelScheduledClicks,
-    ensureAudioContext,
+    audioContext,
     isClickEnabled,
+    outputLatencySeconds,
     playback.audioRef,
     playback.isPlaying,
     playback.playbackRate

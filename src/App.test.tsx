@@ -293,6 +293,40 @@ describe("App", () => {
     expect(within(speedControls).getByText("1x")).toBeVisible();
   });
 
+  it("transposes between minus and plus six semitones and resets to zero", async () => {
+    tracks = [createTrack()];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    render(<App />);
+
+    await waitFor(() => {
+      expectTrackEditorLoaded("phrase.mp3");
+    });
+
+    const transposeControls = screen.getByLabelText("Transpose");
+    const transposeUp = screen.getByTitle("半音上げる");
+    const transposeDown = screen.getByTitle("半音下げる");
+
+    expect(within(transposeControls).getByText("0")).toBeVisible();
+    fireEvent.click(transposeUp);
+    expect(within(transposeControls).getByText("+1")).toBeVisible();
+
+    for (let semitones = 2; semitones <= 6; semitones += 1) {
+      fireEvent.click(transposeUp);
+    }
+
+    expect(within(transposeControls).getByText("+6")).toBeVisible();
+    expect(transposeUp).toBeDisabled();
+    fireEvent.click(screen.getByTitle("転調を0に戻す"));
+    expect(within(transposeControls).getByText("0")).toBeVisible();
+
+    for (let semitones = -1; semitones >= -6; semitones -= 1) {
+      fireEvent.click(transposeDown);
+    }
+
+    expect(within(transposeControls).getByText("-6")).toBeVisible();
+    expect(transposeDown).toBeDisabled();
+  });
+
   it("claims playback speed shortcuts before later page listeners", async () => {
     tracks = [createTrack()];
     window.history.replaceState(null, "", "/tracks/track-1");

@@ -25,6 +25,7 @@ export function usePlaybackState({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const stemAudioRef = useRef<HTMLAudioElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const queryClient = useQueryClient();
   const savedDurationRef = useRef(trackDuration);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -82,10 +83,13 @@ export function usePlaybackState({
         stemAudio.currentTime = audio.currentTime;
       }
 
-      const playRequests = [audio.play()];
+      const playRequests: Promise<unknown>[] = [audio.play()];
 
       if (stemAudio) {
         playRequests.push(stemAudio.play());
+      }
+      if (audioContextRef.current?.state === "suspended") {
+        playRequests.push(audioContextRef.current.resume());
       }
 
       void Promise.all(playRequests).catch((error: unknown) => {
@@ -141,6 +145,7 @@ export function usePlaybackState({
 
   return useMemo(
     () => ({
+      audioContextRef,
       audioRef,
       changePlaybackRate,
       currentTime,

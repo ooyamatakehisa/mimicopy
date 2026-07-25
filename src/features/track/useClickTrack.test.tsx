@@ -17,30 +17,17 @@ describe("useClickTrack", () => {
     vi.unstubAllGlobals();
   });
 
-  it("routes the media element and clicks through the same audio context", () => {
+  it("uses the shared audio context without taking ownership of it", () => {
     const audio = document.createElement("audio");
     const destination = {} as AudioDestinationNode;
-    const connect = vi.fn();
-    const disconnect = vi.fn();
     const close = vi.fn(() => Promise.resolve());
     const resume = vi.fn(() => Promise.resolve());
-    const createMediaElementSource = vi.fn(() => ({
-      connect,
-      disconnect
-    }));
-
-    class SynchronizedAudioContextMock {
-      currentTime = 0;
-      destination = destination;
-      close = close;
-      createMediaElementSource = createMediaElementSource;
-      resume = resume;
-    }
-
-    vi.stubGlobal(
-      "AudioContext",
-      SynchronizedAudioContextMock as unknown as typeof AudioContext
-    );
+    const audioContext = {
+      currentTime: 0,
+      destination,
+      close,
+      resume
+    } as unknown as AudioContext;
 
     const playback = {
       audioRef: { current: audio },
@@ -49,16 +36,18 @@ describe("useClickTrack", () => {
       playbackRate: 1
     } as unknown as PlaybackState;
     const { result, unmount } = renderHook(() =>
-      useClickTrack({ beatGrid, playback })
+      useClickTrack({
+        audioContext,
+        beatGrid,
+        outputLatencySeconds: 0,
+        playback
+      })
     );
 
     act(() => {
       result.current.toggleClickTrack();
     });
 
-    expect(createMediaElementSource).toHaveBeenCalledOnce();
-    expect(createMediaElementSource).toHaveBeenCalledWith(audio);
-    expect(connect).toHaveBeenCalledWith(destination);
     expect(resume).toHaveBeenCalledOnce();
 
     act(() => {
@@ -66,10 +55,9 @@ describe("useClickTrack", () => {
       result.current.toggleClickTrack();
     });
 
-    expect(createMediaElementSource).toHaveBeenCalledOnce();
+    expect(resume).toHaveBeenCalledTimes(2);
 
     unmount();
-    expect(disconnect).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
   });
 });

@@ -215,6 +215,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   const trackId = new URL(page.url()).pathname.split("/").at(-1);
 
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Transpose")).toContainText("0");
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
@@ -334,6 +335,31 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Playback speed")).toContainText("0.75x");
   await page.keyboard.press("Shift+Period");
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
+
+  await page.getByTitle("半音上げる").click();
+  await expect(page.getByLabel("Transpose")).toContainText("+1");
+  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+    "ready"
+  );
+  await page
+    .locator('audio[aria-label="Original audio"]')
+    .evaluate((audio) => {
+      (audio as HTMLAudioElement).currentTime = 0;
+    });
+  await page.getByTitle("再生").click();
+  await expect
+    .poll(() =>
+      page
+        .locator('audio[aria-label="Original audio"]')
+        .evaluate((audio) => (audio as HTMLAudioElement).currentTime)
+    )
+    .toBeGreaterThan(0.1);
+  await page.getByTitle("停止").click();
+  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+    "ready"
+  );
+  await page.getByTitle("半音下げる").click();
+  await expect(page.getByLabel("Transpose")).toContainText("0");
 
   await page.getByLabel("Marker time").fill("0:00");
   await page.getByTitle("入力時刻にマーカー追加").click();

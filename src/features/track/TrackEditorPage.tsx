@@ -28,10 +28,15 @@ import { PlaybackAudio } from "./PlaybackAudio";
 import { StemMixer } from "./StemMixer";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
+import {
+  pitchShiftWindowSeconds,
+  useAudioPitchShift
+} from "./useAudioPitchShift";
 import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
 import { useStemMixer } from "./useStemMixer";
+import { useTranspose } from "./useTranspose";
 import { useWaveformViewport } from "./useWaveformViewport";
 import { WaveformPanel } from "./WaveformPanel";
 
@@ -208,6 +213,12 @@ function TrackEditor({
     trackId: track.id
   });
   const mixer = useStemMixer();
+  const transpose = useTranspose();
+  const pitchShift = useAudioPitchShift({
+    playback,
+    semitones: transpose.semitones,
+    stemMediaUrl: track.separation?.mediaUrl ?? null
+  });
   const markers = useMarkersState({
     initialMarkers: track.markers,
     trackId: track.id
@@ -216,7 +227,13 @@ function TrackEditor({
     currentTime: playback.currentTime,
     duration: playback.duration
   });
-  const clickTrack = useClickTrack({ beatGrid, playback });
+  const clickTrack = useClickTrack({
+    audioContext: pitchShift.audioContext,
+    beatGrid,
+    outputLatencySeconds:
+      transpose.semitones === 0 ? 0 : pitchShiftWindowSeconds,
+    playback
+  });
   const beatGridErrorMessage =
     beatGridInputErrorMessage ??
     (beatGridMutation.isError
@@ -232,6 +249,7 @@ function TrackEditor({
     markers.markerSaveErrorMessage ??
     beatGridErrorMessage ??
     clickTrack.clickErrorMessage ??
+    pitchShift.pitchShiftErrorMessage ??
     playback.durationErrorMessage;
   const loadState = errorMessage ? "error" : "ready";
   const titleMessage = titleMutation.isPending
@@ -368,6 +386,7 @@ function TrackEditor({
         onAnalyzeBeatGrid={analyzeBeatGrid}
         markers={markers}
         playback={playback}
+        transpose={transpose}
         waveform={waveform}
       />
     </>
