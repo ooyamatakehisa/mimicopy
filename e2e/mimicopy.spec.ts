@@ -37,6 +37,28 @@ function createToneWavBuffer() {
   return buffer;
 }
 
+function createCompletedBeatAnalysis() {
+  const now = "2026-07-20T00:00:00.000Z";
+
+  return {
+    beatGrid: {
+      analyzedAt: now,
+      beats: [
+        { isDownbeat: true, position: 1, time: 0.25 },
+        { isDownbeat: false, position: 2, time: 0.5 },
+        { isDownbeat: false, position: 3, time: 0.75 }
+      ],
+      beatsPerBar: [4],
+      downbeats: [0.25],
+      source: "madmom"
+    },
+    createdAt: now,
+    error: null,
+    status: "completed",
+    updatedAt: now
+  };
+}
+
 async function expectWaveformCanvas(page: Page) {
   await expect
     .poll(() =>
@@ -126,6 +148,16 @@ async function mockYoutubeConversion(page: Page) {
     updatedAt: track.updatedAt
   };
 
+  await page.route(
+    "**/api/tracks/e2e-youtube-track/beat-grid",
+    async (route) => {
+      await route.fulfill({
+        body: JSON.stringify(createCompletedBeatAnalysis()),
+        contentType: "application/json",
+        status: 200
+      });
+    }
+  );
   await page.route("**/api/youtube", async (route) => {
     const requestBody = route.request().postDataJSON() as {
       targetStem?: unknown;
@@ -187,6 +219,13 @@ async function mockYoutubeConversion(page: Page) {
 test("loads audio and supports the main playback and marker workflow", async ({
   page
 }) => {
+  await page.route("**/api/tracks/*/beat-grid", async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(createCompletedBeatAnalysis()),
+      contentType: "application/json",
+      status: 200
+    });
+  });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Mimicopy" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
@@ -232,54 +271,12 @@ test("loads audio and supports the main playback and marker workflow", async ({
     deltaY: 100
   });
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
-  let savedClickTrack: Record<string, unknown> | null = null;
-
-  await page.route("**/api/tracks/*/beat-grid", async (route) => {
-    await route.fulfill({
-      body: JSON.stringify(
-        savedClickTrack ?? { beatGrid: null, reference: null }
-      ),
-      contentType: "application/json",
-      status: 200
-    });
-  });
-  await page.route("**/api/tracks/*/beat-grid/youtube", async (route) => {
-    savedClickTrack = {
-      beatGrid: {
-        analyzedAt: "2026-07-20T00:00:00.000Z",
-        beats: [
-          { isDownbeat: true, position: 1, time: 0.25 },
-          { isDownbeat: false, position: 2, time: 0.5 },
-          { isDownbeat: false, position: 3, time: 0.75 }
-        ],
-        beatsPerBar: [4],
-        downbeats: [0.25],
-        source: "madmom"
-      },
-      reference: {
-        duration: 1,
-        sourceType: "youtube",
-        title: "Reference groove",
-        url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
-      }
-    };
-    await route.fulfill({
-      body: JSON.stringify(savedClickTrack),
-      contentType: "application/json",
-      status: 200
-    });
-  });
 
   const clickTrackControls = page.getByLabel("Click track");
-  const clickSourceInput = page.getByLabel("Click source YouTube URL");
   const clickToggle = page.getByTitle("クリック音をオン/オフ");
 
-  await expect(clickTrackControls).toContainText("No beat grid");
-  await expect(clickToggle).toBeDisabled();
-  await clickSourceInput.fill("https://www.youtube.com/watch?v=DFRdswY-WHU");
-  await page.getByTitle("クリック用YouTubeを解析").click();
   await expect(clickTrackControls).toContainText("3 beats / 1 downbeats");
-  await expect(clickTrackControls).toContainText("Reference groove");
+  await expect(page.getByLabel("Click source YouTube URL")).toHaveCount(0);
   await expect(clickToggle).toBeEnabled();
   await clickToggle.click();
   await expect(clickToggle).toHaveAttribute("aria-pressed", "true");
@@ -380,9 +377,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Click track")).toContainText(
     "3 beats / 1 downbeats"
   );
-  await expect(page.getByLabel("Click source YouTube URL")).toHaveValue(
-    "https://www.youtube.com/watch?v=DFRdswY-WHU"
-  );
+  await expect(page.getByLabel("Click source YouTube URL")).toHaveCount(0);
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
   const library = page.getByLabel("Saved MP3 library");

@@ -1,9 +1,5 @@
 import type { Marker } from "./markers";
-import {
-  parseBeatGridResponse,
-  parseSavedYoutubeBeatGridResponse,
-  parseYoutubeBeatGridResponse
-} from "./beats";
+import { parseTrackBeatAnalysisResponse } from "./beats";
 import {
   getErrorMessage,
   parseTrackListResponse,
@@ -166,7 +162,7 @@ export async function deleteTrack(trackId: string) {
   await parseJsonResponse(response, "保存済みMP3を削除できませんでした。");
 }
 
-export async function analyzeTrackBeatGrid(trackId: string) {
+export async function retryTrackBeatAnalysis(trackId: string) {
   const response = await fetch(
     `/api/tracks/${encodeURIComponent(trackId)}/beat-grid`,
     {
@@ -175,10 +171,10 @@ export async function analyzeTrackBeatGrid(trackId: string) {
   );
   const body = await parseJsonResponse(response, "拍解析に失敗しました。");
 
-  return parseBeatGridResponse(body);
+  return parseTrackBeatAnalysisResponse(body);
 }
 
-export async function fetchSavedBeatGrid(trackId: string) {
+export async function fetchTrackBeatAnalysis(trackId: string) {
   const response = await fetch(
     `/api/tracks/${encodeURIComponent(trackId)}/beat-grid`
   );
@@ -187,27 +183,7 @@ export async function fetchSavedBeatGrid(trackId: string) {
     "保存済みの拍解析結果を読み込めませんでした。"
   );
 
-  return parseSavedYoutubeBeatGridResponse(body);
-}
-
-export async function analyzeYoutubeBeatGrid({
-  trackId,
-  url
-}: {
-  trackId: string;
-  url: string;
-}) {
-  const response = await fetch(
-    `/api/tracks/${encodeURIComponent(trackId)}/beat-grid/youtube`,
-    {
-    body: JSON.stringify({ url }),
-    headers: { "Content-Type": "application/json" },
-    method: "POST"
-    }
-  );
-  const body = await parseJsonResponse(response, "拍解析に失敗しました。");
-
-  return parseYoutubeBeatGridResponse(body);
+  return parseTrackBeatAnalysisResponse(body);
 }
 
 export async function fetchMediaArrayBuffer(

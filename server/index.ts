@@ -2,7 +2,7 @@ import express, { type Request, type Response } from "express";
 import { Innertube, type Types } from "youtubei.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -15,7 +15,7 @@ import {
 import { installGlobalHttpDispatcher } from "./httpDispatcher.js";
 import {
   createLibraryStore,
-  type LibraryClickTrack,
+  type LibraryBeatAnalysis,
   type LibraryMarker,
   type LibraryTrack,
   type LibraryTrackSummary
@@ -85,20 +85,7 @@ type TrackDeleteResponseBody =
       error: string;
     };
 
-type BeatGridResponseBody =
-  | {
-      beatGrid: BeatGrid;
-    }
-  | {
-      error: string;
-    };
-
-type YoutubeBeatGridResponseBody = LibraryClickTrack | { error: string };
-
-type StoredBeatGridResponseBody =
-  | LibraryClickTrack
-  | { beatGrid: null; reference: null }
-  | { error: string };
+type BeatAnalysisResponseBody = LibraryBeatAnalysis | { error: string };
 
 type ConvertYoutubeAudio = (
   videoId: string,
@@ -211,7 +198,6 @@ function getYoutubeClient() {
 
 function getStoragePaths(storageDir: string) {
   return {
-    beatReferenceDir: path.join(storageDir, "beat-references"),
     databasePath: path.join(storageDir, "library.sqlite"),
     mediaDir: path.join(storageDir, "media")
   };
@@ -497,7 +483,66 @@ export function createApp(options: CreateAppOptions = {}) {
     options.convertYoutubeAudio ?? convertYoutubeToMp3;
   const separateAudio =
     options.separateAudio ?? createStemSeparatorClient();
+  let beatAnalysisQueue = Promise.resolve();
   let separationQueue = Promise.resolve();
+  const scheduledBeatAnalysisIds = new Set<string>();
+  const scheduleBeatAnalysis = ({
+    inputFilename,
+    trackId
+  }: {
+    inputFilename: string;
+    trackId: string;
+  }) => {
+    if (scheduledBeatAnalysisIds.has(trackId)) {
+      return;
+    }
+
+    scheduledBeatAnalysisIds.add(trackId);
+    const run = async () => {
+      try {
+        if (!store.getMediaFilename(trackId)) {
+          return;
+        }
+
+        store.updateBeatAnalysisStatus({ status: "running", trackId });
+        const beatGrid = await analyzeBeats(
+          path.join(paths.mediaDir, inputFilename)
+        );
+
+        if (store.getMediaFilename(trackId)) {
+          store.completeBeatAnalysis(trackId, beatGrid);
+        }
+      } catch (error) {
+        if (store.getMediaFilename(trackId)) {
+          store.updateBeatAnalysisStatus({
+            error: toErrorMessage(error).slice(0, 1000),
+            status: "failed",
+            trackId
+          });
+        }
+      } finally {
+        scheduledBeatAnalysisIds.delete(trackId);
+      }
+    };
+
+    beatAnalysisQueue = beatAnalysisQueue.then(run, run);
+  };
+  const queueTrackBeatAnalysis = ({
+    inputFilename,
+    trackId
+  }: {
+    inputFilename: string;
+    trackId: string;
+  }) => {
+    const analysis = store.queueBeatAnalysis(trackId);
+
+    if (!analysis) {
+      throw new Error("Could not create the beat analysis job.");
+    }
+
+    scheduleBeatAnalysis({ inputFilename, trackId });
+    return analysis;
+  };
   const scheduleSeparation = ({
     inputFilename,
     outputFilename,
@@ -548,34 +593,25 @@ export function createApp(options: CreateAppOptions = {}) {
   for (const separation of store.listIncompleteSeparations()) {
     scheduleSeparation(separation);
   }
-  const analyzeYoutubeClickTrack = async (
-    url: unknown
-  ): Promise<LibraryClickTrack> => {
-    let outputPath: string | undefined;
+  store.queueMissingBeatAnalyses();
+  for (const analysis of store.listIncompleteBeatAnalyses()) {
+    scheduleBeatAnalysis(analysis);
+  }
 
-    try {
-      const videoId = getYoutubeVideoId(url);
+  const getOrQueueBeatAnalysis = (trackId: string) => {
+    const currentAnalysis = store.getBeatAnalysis(trackId);
 
-      await mkdir(paths.beatReferenceDir, { recursive: true });
-      outputPath = path.join(paths.beatReferenceDir, `${randomUUID()}.mp3`);
-
-      const converted = await convertYoutubeAudio(videoId, outputPath);
-      const beatGrid = await analyzeBeats(outputPath);
-
-      return {
-        beatGrid,
-        reference: {
-          duration: converted.duration,
-          sourceType: "youtube",
-          title: converted.title,
-          url: `https://www.youtube.com/watch?v=${videoId}`
-        }
-      };
-    } finally {
-      if (outputPath) {
-        await rm(outputPath, { force: true }).catch(() => undefined);
-      }
+    if (currentAnalysis) {
+      return currentAnalysis;
     }
+
+    const inputFilename = store.getMediaFilename(trackId);
+
+    if (!inputFilename) {
+      return null;
+    }
+
+    return queueTrackBeatAnalysis({ inputFilename, trackId });
   };
 
   app.use(express.json({ limit: "1mb" }));
@@ -641,6 +677,10 @@ export function createApp(options: CreateAppOptions = {}) {
           mediaFilename: fileName,
           sourceType: "upload",
           title: getUploadTitle(request)
+        });
+        queueTrackBeatAnalysis({
+          inputFilename: fileName,
+          trackId: track.id
         });
 
         response.status(201).json({ track });
@@ -723,25 +763,31 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.post(
     "/api/tracks/:trackId/beat-grid",
-    async (
+    (
       request: Request<{ trackId: string }>,
-      response: Response<BeatGridResponseBody>
+      response: Response<BeatAnalysisResponseBody>
     ) => {
       try {
-        const mediaFilename = store.getMediaFilename(getTrackId(request));
+        const trackId = getTrackId(request);
+        const mediaFilename = store.getMediaFilename(trackId);
 
         if (!mediaFilename) {
           response.status(404).json({ error: "Track was not found." });
           return;
         }
 
-        const beatGrid = await analyzeBeats(
-          path.join(paths.mediaDir, mediaFilename)
-        );
+        const analysis = store.getBeatAnalysis(trackId);
+        const queuedAnalysis =
+          analysis?.status === "queued" || analysis?.status === "running"
+            ? analysis
+            : queueTrackBeatAnalysis({
+                inputFilename: mediaFilename,
+                trackId
+              });
 
-        response.json({ beatGrid });
+        response.status(202).json(queuedAnalysis);
       } catch (error) {
-        sendError(response, error, "Could not analyze the beat grid.");
+        sendError(response, error, "Could not queue the beat analysis.");
       }
     }
   );
@@ -750,7 +796,7 @@ export function createApp(options: CreateAppOptions = {}) {
     "/api/tracks/:trackId/beat-grid",
     (
       request: Request<{ trackId: string }>,
-      response: Response<StoredBeatGridResponseBody>
+      response: Response<BeatAnalysisResponseBody>
     ) => {
       try {
         const trackId = getTrackId(request);
@@ -760,63 +806,16 @@ export function createApp(options: CreateAppOptions = {}) {
           return;
         }
 
-        const clickTrack = store.getClickTrack(trackId);
+        const analysis = getOrQueueBeatAnalysis(trackId);
 
-        response.json(
-          clickTrack ?? {
-            beatGrid: null,
-            reference: null
-          }
-        );
-      } catch (error) {
-        sendError(response, error, "Could not load the saved beat grid.");
-      }
-    }
-  );
-
-  app.post(
-    "/api/tracks/:trackId/beat-grid/youtube",
-    async (
-      request: Request<
-        { trackId: string },
-        YoutubeBeatGridResponseBody,
-        YoutubeRequestBody
-      >,
-      response: Response<YoutubeBeatGridResponseBody>
-    ) => {
-      try {
-        const trackId = getTrackId(request);
-
-        if (!store.getMediaFilename(trackId)) {
+        if (!analysis) {
           response.status(404).json({ error: "Track was not found." });
           return;
         }
 
-        const clickTrack = await analyzeYoutubeClickTrack(request.body.url);
-        const savedClickTrack = store.replaceClickTrack(trackId, clickTrack);
-
-        if (!savedClickTrack) {
-          response.status(404).json({ error: "Track was not found." });
-          return;
-        }
-
-        response.json(savedClickTrack);
+        response.json(analysis);
       } catch (error) {
-        sendError(response, error, "Could not analyze the YouTube beat grid.");
-      }
-    }
-  );
-
-  app.post(
-    "/api/beat-grid/youtube",
-    async (
-      request: Request<never, YoutubeBeatGridResponseBody, YoutubeRequestBody>,
-      response: Response<YoutubeBeatGridResponseBody>
-    ) => {
-      try {
-        response.json(await analyzeYoutubeClickTrack(request.body.url));
-      } catch (error) {
-        sendError(response, error, "Could not analyze the YouTube beat grid.");
+        sendError(response, error, "Could not load the beat analysis.");
       }
     }
   );
@@ -874,6 +873,10 @@ export function createApp(options: CreateAppOptions = {}) {
           mediaFilename: fileName,
           sourceType: "youtube",
           title: converted.title
+        });
+        queueTrackBeatAnalysis({
+          inputFilename: fileName,
+          trackId: track.id
         });
 
         if (targetStem) {

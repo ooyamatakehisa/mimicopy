@@ -54,16 +54,23 @@ export type IncompleteLibrarySeparation = {
   trackId: string;
 };
 
-export type LibraryBeatGridReference = {
-  duration: number;
-  sourceType: "youtube";
-  title: string;
-  url: string;
+export type LibraryBeatAnalysisStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type LibraryBeatAnalysis = {
+  beatGrid: BeatGrid | null;
+  createdAt: string;
+  error: string | null;
+  status: LibraryBeatAnalysisStatus;
+  updatedAt: string;
 };
 
-export type LibraryClickTrack = {
-  beatGrid: BeatGrid;
-  reference: LibraryBeatGridReference;
+export type IncompleteLibraryBeatAnalysis = {
+  inputFilename: string;
+  trackId: string;
 };
 
 type CreateTrackInput = {
@@ -144,19 +151,38 @@ function rowToMarker(row: Record<string, unknown>): LibraryMarker {
   };
 }
 
-function rowToClickTrack(row: Record<string, unknown>): LibraryClickTrack {
-  const beatGrid = parseStoredBeatGrid(
-    JSON.parse(requireString(row, "beat_grid_json")) as unknown
-  );
+function toBeatAnalysisStatus(value: string): LibraryBeatAnalysisStatus {
+  if (
+    value === "queued" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  throw new Error(`Invalid beat analysis status: ${value}`);
+}
+
+function rowToBeatAnalysis(
+  row: Record<string, unknown>
+): LibraryBeatAnalysis {
+  const status = toBeatAnalysisStatus(requireString(row, "status"));
+  const beatGrid =
+    typeof row.beat_grid_json === "string"
+      ? parseStoredBeatGrid(JSON.parse(row.beat_grid_json) as unknown)
+      : null;
+
+  if (status === "completed" && !beatGrid) {
+    throw new Error("Completed beat analysis is missing its beat grid.");
+  }
 
   return {
     beatGrid,
-    reference: {
-      duration: toFiniteNumber(row.reference_duration),
-      sourceType: "youtube",
-      title: requireString(row, "reference_title"),
-      url: requireString(row, "reference_url")
-    }
+    createdAt: requireString(row, "created_at"),
+    error: typeof row.error === "string" ? row.error : null,
+    status,
+    updatedAt: requireString(row, "updated_at")
   };
 }
 
@@ -223,12 +249,11 @@ function createSchema(database: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS markers_track_time_index
       ON markers(track_id, time);
 
-    CREATE TABLE IF NOT EXISTS click_tracks (
+    CREATE TABLE IF NOT EXISTS track_beat_analyses (
       track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
-      beat_grid_json TEXT NOT NULL,
-      reference_url TEXT NOT NULL,
-      reference_title TEXT NOT NULL,
-      reference_duration REAL NOT NULL,
+      status TEXT NOT NULL,
+      beat_grid_json TEXT,
+      error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -388,6 +413,147 @@ export class LibraryStore {
         trackId: requireString(row, "track_id")
       };
     });
+  }
+
+  getBeatAnalysis(trackId: string) {
+    const row = this.#database
+      .prepare(
+        `
+          SELECT
+            status,
+            beat_grid_json,
+            error,
+            created_at,
+            updated_at
+          FROM track_beat_analyses
+          WHERE track_id = ?
+        `
+      )
+      .get(trackId);
+
+    return row ? rowToBeatAnalysis(row) : null;
+  }
+
+  queueBeatAnalysis(trackId: string) {
+    if (!this.getMediaFilename(trackId)) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          INSERT INTO track_beat_analyses (
+            track_id,
+            status,
+            beat_grid_json,
+            error,
+            created_at,
+            updated_at
+          )
+          VALUES (?, 'queued', NULL, NULL, ?, ?)
+          ON CONFLICT(track_id) DO UPDATE SET
+            status = 'queued',
+            beat_grid_json = NULL,
+            error = NULL,
+            updated_at = excluded.updated_at
+        `
+      )
+      .run(trackId, now, now);
+
+    return this.getBeatAnalysis(trackId);
+  }
+
+  queueMissingBeatAnalyses() {
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          INSERT INTO track_beat_analyses (
+            track_id,
+            status,
+            beat_grid_json,
+            error,
+            created_at,
+            updated_at
+          )
+          SELECT tracks.id, 'queued', NULL, NULL, ?, ?
+          FROM tracks
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM track_beat_analyses
+            WHERE track_beat_analyses.track_id = tracks.id
+          )
+        `
+      )
+      .run(now, now);
+  }
+
+  listIncompleteBeatAnalyses(): IncompleteLibraryBeatAnalysis[] {
+    const rows = this.#database
+      .prepare(
+        `
+          SELECT
+            track_beat_analyses.track_id,
+            tracks.media_filename AS input_filename
+          FROM track_beat_analyses
+          INNER JOIN tracks ON tracks.id = track_beat_analyses.track_id
+          WHERE track_beat_analyses.status IN ('queued', 'running')
+          ORDER BY track_beat_analyses.created_at ASC
+        `
+      )
+      .all();
+
+    return rows.map((row) => ({
+      inputFilename: requireString(row, "input_filename"),
+      trackId: requireString(row, "track_id")
+    }));
+  }
+
+  updateBeatAnalysisStatus({
+    error,
+    status,
+    trackId
+  }: {
+    error?: string | null;
+    status: Exclude<LibraryBeatAnalysisStatus, "completed">;
+    trackId: string;
+  }) {
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          UPDATE track_beat_analyses
+          SET status = ?, beat_grid_json = NULL, error = ?, updated_at = ?
+          WHERE track_id = ?
+        `
+      )
+      .run(status, error ?? null, now, trackId);
+
+    return this.getBeatAnalysis(trackId);
+  }
+
+  completeBeatAnalysis(trackId: string, beatGrid: BeatGrid) {
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          UPDATE track_beat_analyses
+          SET
+            status = 'completed',
+            beat_grid_json = ?,
+            error = NULL,
+            updated_at = ?
+          WHERE track_id = ?
+        `
+      )
+      .run(JSON.stringify(beatGrid), now, trackId);
+
+    return this.getBeatAnalysis(trackId);
   }
 
   createTrack(input: CreateTrackInput) {
@@ -570,65 +736,6 @@ export class LibraryStore {
     }
 
     return this.getTrack(trackId);
-  }
-
-  getClickTrack(trackId: string) {
-    const row = this.#database
-      .prepare(
-        `
-          SELECT
-            beat_grid_json,
-            reference_url,
-            reference_title,
-            reference_duration
-          FROM click_tracks
-          WHERE track_id = ?
-        `
-      )
-      .get(trackId);
-
-    return row ? rowToClickTrack(row) : null;
-  }
-
-  replaceClickTrack(trackId: string, clickTrack: LibraryClickTrack) {
-    if (!this.getMediaFilename(trackId)) {
-      return null;
-    }
-
-    const now = new Date().toISOString();
-
-    this.#database
-      .prepare(
-        `
-          INSERT INTO click_tracks (
-            track_id,
-            beat_grid_json,
-            reference_url,
-            reference_title,
-            reference_duration,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(track_id) DO UPDATE SET
-            beat_grid_json = excluded.beat_grid_json,
-            reference_url = excluded.reference_url,
-            reference_title = excluded.reference_title,
-            reference_duration = excluded.reference_duration,
-            updated_at = excluded.updated_at
-        `
-      )
-      .run(
-        trackId,
-        JSON.stringify(clickTrack.beatGrid),
-        clickTrack.reference.url,
-        normalizeDisplayTitle(clickTrack.reference.title),
-        Math.max(0, clickTrack.reference.duration),
-        now,
-        now
-      );
-
-    return this.getClickTrack(trackId);
   }
 
   deleteTrack(trackId: string) {

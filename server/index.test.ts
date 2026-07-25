@@ -84,11 +84,18 @@ describe("youtubeDownloadPlans", () => {
 });
 
 describe("beat grid API", () => {
-  it("analyzes a stored track with the configured beat analyzer", async () => {
+  it("automatically analyzes an uploaded MP3 in the background", async () => {
     const storageDir = await createTempStorageDir();
+    let finishAnalysis: (() => void) | undefined;
+    const analysisGate = new Promise<void>((resolve) => {
+      finishAnalysis = resolve;
+    });
+    const analyzedPaths: string[] = [];
     const app = createApp({
       analyzeBeats: async (audioPath) => {
+        analyzedPaths.push(audioPath);
         expect(path.basename(audioPath)).toMatch(/\.mp3$/);
+        await analysisGate;
 
         return {
           analyzedAt: "2026-07-20T00:00:00.000Z",
@@ -124,14 +131,25 @@ describe("beat grid API", () => {
       const uploadBody = (await uploadResponse.json()) as {
         track: { id: string };
       };
-      const analysisResponse = await fetch(
-        `${baseUrl}/api/tracks/${uploadBody.track.id}/beat-grid`,
-        {
-          method: "POST"
-        }
-      );
+      const beatGridUrl = `${baseUrl}/api/tracks/${uploadBody.track.id}/beat-grid`;
 
-      await expect(analysisResponse.json()).resolves.toEqual({
+      await vi.waitFor(() => {
+        expect(analyzedPaths).toHaveLength(1);
+      });
+      await expect(fetch(beatGridUrl).then((response) => response.json())).resolves.toMatchObject({
+        beatGrid: null,
+        error: null,
+        status: "running"
+      });
+      finishAnalysis?.();
+      await vi.waitFor(async () => {
+        const analysis = (await fetch(beatGridUrl).then((response) =>
+          response.json()
+        )) as { status?: unknown };
+
+        expect(analysis.status).toBe("completed");
+      });
+      await expect(fetch(beatGridUrl).then((response) => response.json())).resolves.toMatchObject({
         beatGrid: {
           analyzedAt: "2026-07-20T00:00:00.000Z",
           beats: [
@@ -141,7 +159,9 @@ describe("beat grid API", () => {
           beatsPerBar: [4],
           downbeats: [0.5],
           source: "madmom"
-        }
+        },
+        error: null,
+        status: "completed"
       });
     } finally {
       await new Promise<void>((resolve, reject) => {
@@ -157,12 +177,13 @@ describe("beat grid API", () => {
     }
   });
 
-  it("saves a temporary YouTube click analysis for its track", async () => {
+  it("automatically analyzes the MP3 produced by YouTube conversion", async () => {
     const storageDir = await createTempStorageDir();
     const convertedPaths: string[] = [];
+    const analyzedPaths: string[] = [];
     const app = createApp({
       analyzeBeats: async (audioPath) => {
-        expect(audioPath).toBe(convertedPaths[0]);
+        analyzedPaths.push(audioPath);
 
         return {
           analyzedAt: "2026-07-20T00:00:00.000Z",
@@ -194,27 +215,30 @@ describe("beat grid API", () => {
       }
 
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      const uploadResponse = await fetch(`${baseUrl}/api/tracks`, {
-        body: new Uint8Array([1, 2, 3]),
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "X-File-Name": "phrase.mp3"
-        },
-        method: "POST"
-      });
-      const uploadBody = (await uploadResponse.json()) as {
-        track: { id: string };
-      };
-      const beatGridUrl = `${baseUrl}/api/tracks/${uploadBody.track.id}/beat-grid`;
-      const analysisResponse = await fetch(`${beatGridUrl}/youtube`, {
+      const conversionResponse = await fetch(`${baseUrl}/api/youtube`, {
         body: JSON.stringify({
+          targetStem: null,
           url: "https://www.youtube.com/watch?v=DFRdswY-WHU&list=RDDFRdswY-WHU"
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST"
       });
+      const conversionBody = (await conversionResponse.json()) as {
+        track: { id: string };
+      };
+      const beatGridUrl = `${baseUrl}/api/tracks/${conversionBody.track.id}/beat-grid`;
 
-      await expect(analysisResponse.json()).resolves.toEqual({
+      await vi.waitFor(() => {
+        expect(analyzedPaths).toEqual(convertedPaths);
+      });
+      await vi.waitFor(async () => {
+        const analysis = (await fetch(beatGridUrl).then((response) =>
+          response.json()
+        )) as { status?: unknown };
+
+        expect(analysis.status).toBe("completed");
+      });
+      await expect(fetch(beatGridUrl).then((response) => response.json())).resolves.toMatchObject({
         beatGrid: {
           analyzedAt: "2026-07-20T00:00:00.000Z",
           beats: [
@@ -225,32 +249,11 @@ describe("beat grid API", () => {
           downbeats: [0.25],
           source: "madmom"
         },
-        reference: {
-          duration: 12,
-          sourceType: "youtube",
-          title: "Reference groove",
-          url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
-        }
+        error: null,
+        status: "completed"
       });
-      await expect(fetch(beatGridUrl).then((response) => response.json())).resolves.toEqual({
-        beatGrid: {
-          analyzedAt: "2026-07-20T00:00:00.000Z",
-          beats: [
-            { isDownbeat: true, position: 1, time: 0.25 },
-            { isDownbeat: false, position: 2, time: 0.75 }
-          ],
-          beatsPerBar: [4],
-          downbeats: [0.25],
-          source: "madmom"
-        },
-        reference: {
-          duration: 12,
-          sourceType: "youtube",
-          title: "Reference groove",
-          url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
-        }
-      });
-      await expect(access(convertedPaths[0] ?? "")).rejects.toThrow();
+      expect(convertedPaths).toHaveLength(1);
+      await expect(access(convertedPaths[0] ?? "")).resolves.toBeUndefined();
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
@@ -279,6 +282,13 @@ describe("YouTube stem separation API", () => {
       targetStem: string;
     }> = [];
     const app = createApp({
+      analyzeBeats: async () => ({
+        analyzedAt: "2026-07-20T00:00:00.000Z",
+        beats: [],
+        beatsPerBar: [4],
+        downbeats: [],
+        source: "madmom"
+      }),
       convertYoutubeAudio: async (videoId, outputPath) => {
         expect(videoId).toBe("OS45uTF_8P0");
         await writeFile(outputPath, new Uint8Array([1, 2, 3]));

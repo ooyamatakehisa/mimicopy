@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import type { LibraryClickTrack } from "./libraryStore.js";
 import { createLibraryStore } from "./libraryStore.js";
 
 let tempDirs: string[] = [];
@@ -53,7 +52,7 @@ describe("LibraryStore", () => {
     reopenedStore.close();
   });
 
-  it("persists a click track across store instances", async () => {
+  it("persists an automatic beat analysis across store instances", async () => {
     const paths = await createTempStorage();
     const store = createLibraryStore(paths);
     const track = store.createTrack({
@@ -62,31 +61,38 @@ describe("LibraryStore", () => {
       sourceType: "upload",
       title: "phrase.mp3"
     });
-    const clickTrack: LibraryClickTrack = {
-      beatGrid: {
-        analyzedAt: "2026-07-20T00:00:00.000Z",
-        beats: [
-          { isDownbeat: true, position: 1, time: 0.25 },
-          { isDownbeat: false, position: 2, time: 0.75 }
-        ],
-        beatsPerBar: [4],
-        downbeats: [0.25],
-        source: "madmom"
-      },
-      reference: {
-        duration: 12,
-        sourceType: "youtube",
-        title: "Reference groove",
-        url: "https://www.youtube.com/watch?v=DFRdswY-WHU"
-      }
+    const beatGrid = {
+      analyzedAt: "2026-07-20T00:00:00.000Z",
+      beats: [
+        { isDownbeat: true, position: 1, time: 0.25 },
+        { isDownbeat: false, position: 2, time: 0.75 }
+      ],
+      beatsPerBar: [4],
+      downbeats: [0.25],
+      source: "madmom" as const
     };
 
-    expect(store.replaceClickTrack(track.id, clickTrack)).toEqual(clickTrack);
+    store.queueMissingBeatAnalyses();
+    expect(store.getBeatAnalysis(track.id)).toMatchObject({
+      beatGrid: null,
+      error: null,
+      status: "queued"
+    });
+    expect(store.listIncompleteBeatAnalyses()).toEqual([
+      { inputFilename: "phrase.mp3", trackId: track.id }
+    ]);
+    store.updateBeatAnalysisStatus({ status: "running", trackId: track.id });
+    store.completeBeatAnalysis(track.id, beatGrid);
     store.close();
 
     const reopenedStore = createLibraryStore(paths);
 
-    expect(reopenedStore.getClickTrack(track.id)).toEqual(clickTrack);
+    expect(reopenedStore.getBeatAnalysis(track.id)).toMatchObject({
+      beatGrid,
+      error: null,
+      status: "completed"
+    });
+    expect(reopenedStore.listIncompleteBeatAnalyses()).toEqual([]);
     reopenedStore.close();
   });
 

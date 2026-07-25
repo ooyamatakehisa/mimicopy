@@ -12,16 +12,18 @@ export type BeatGrid = {
   source: "madmom";
 };
 
-export type BeatGridReference = {
-  duration: number;
-  sourceType: "youtube";
-  title: string;
-  url: string;
-};
+export type BeatAnalysisStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
 
-export type YoutubeBeatGridAnalysis = {
-  beatGrid: BeatGrid;
-  reference: BeatGridReference;
+export type TrackBeatAnalysis = {
+  beatGrid: BeatGrid | null;
+  createdAt: string;
+  error: string | null;
+  status: BeatAnalysisStatus;
+  updatedAt: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -108,71 +110,37 @@ export function parseBeatGrid(value: unknown): BeatGrid | null {
   };
 }
 
-function parseBeatGridReference(value: unknown): BeatGridReference | null {
+export function parseTrackBeatAnalysisResponse(value: unknown) {
   if (!isRecord(value)) {
-    return null;
+    throw new Error("拍解析結果を読み込めませんでした。");
   }
 
-  const duration = readNumber(value, "duration");
-  const sourceType = readString(value, "sourceType");
-  const title = readString(value, "title");
-  const url = readString(value, "url");
+  const status = readString(value, "status");
+  const createdAt = readString(value, "createdAt");
+  const updatedAt = readString(value, "updatedAt");
+  const error =
+    value.error === null ? null : readString(value, "error");
+  const beatGrid =
+    value.beatGrid === null ? null : parseBeatGrid(value.beatGrid);
 
   if (
-    duration === null ||
-    duration < 0 ||
-    sourceType !== "youtube" ||
-    !title ||
-    !url
+    (status !== "queued" &&
+      status !== "running" &&
+      status !== "completed" &&
+      status !== "failed") ||
+    !createdAt ||
+    !updatedAt ||
+    (error === null && value.error !== null) ||
+    (status === "completed" ? !beatGrid : beatGrid !== null)
   ) {
-    return null;
+    throw new Error("拍解析結果の形式が壊れています。");
   }
 
   return {
-    duration,
-    sourceType,
-    title,
-    url
-  };
-}
-
-export function parseBeatGridResponse(value: unknown) {
-  if (!isRecord(value)) {
-    throw new Error("拍解析結果を読み込めませんでした。");
-  }
-
-  const beatGrid = parseBeatGrid(value.beatGrid);
-
-  if (!beatGrid) {
-    throw new Error("拍解析結果の形式が壊れています。");
-  }
-
-  return beatGrid;
-}
-
-export function parseYoutubeBeatGridResponse(value: unknown) {
-  if (!isRecord(value)) {
-    throw new Error("拍解析結果を読み込めませんでした。");
-  }
-
-  const beatGrid = parseBeatGrid(value.beatGrid);
-  const reference = parseBeatGridReference(value.reference);
-
-  if (!beatGrid || !reference) {
-    throw new Error("拍解析結果の形式が壊れています。");
-  }
-
-  return { beatGrid, reference };
-}
-
-export function parseSavedYoutubeBeatGridResponse(value: unknown) {
-  if (
-    isRecord(value) &&
-    value.beatGrid === null &&
-    value.reference === null
-  ) {
-    return null;
-  }
-
-  return parseYoutubeBeatGridResponse(value);
+    beatGrid,
+    createdAt,
+    error,
+    status,
+    updatedAt
+  } satisfies TrackBeatAnalysis;
 }
