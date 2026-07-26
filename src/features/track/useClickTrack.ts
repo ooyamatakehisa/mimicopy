@@ -114,9 +114,7 @@ export function useClickTrack({
       return undefined;
     }
 
-    const audio = playback.audioRef.current;
-
-    if (!audio || !audioContext) {
+    if (!audioContext) {
       return undefined;
     }
 
@@ -125,7 +123,7 @@ export function useClickTrack({
     });
 
     const scheduleVisibleBeats = () => {
-      const currentTime = audio.currentTime;
+      const currentTime = playback.getCurrentTime();
       const lastTime = lastMediaTimeRef.current;
 
       if (
@@ -152,13 +150,18 @@ export function useClickTrack({
           continue;
         }
 
+        const contextTime =
+          playback.getContextTimeForTrackTime(beat.time);
+
+        if (contextTime === null) {
+          continue;
+        }
+
         scheduledBeatKeysRef.current.add(beatKey);
         const oscillator = scheduleClick({
           audioContext,
           beat,
-          startAt:
-            audioContext.currentTime +
-            Math.max(0, beat.time - currentTime) / playback.playbackRate +
+          startAt: Math.max(audioContext.currentTime, contextTime) +
             outputLatencySeconds
         });
         scheduledOscillatorsRef.current.set(beatKey, oscillator);
@@ -184,9 +187,9 @@ export function useClickTrack({
     audioContext,
     isClickEnabled,
     outputLatencySeconds,
-    playback.audioRef,
+    playback.getContextTimeForTrackTime,
+    playback.getCurrentTime,
     playback.isPlaying,
-    playback.playbackRate
   ]);
 
   return useMemo(

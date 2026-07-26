@@ -1,5 +1,28 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  createAudioPlaybackGraph,
+  destroyAudioPlaybackGraph,
+  restartAudioPlaybackGraph,
+  setAudioPlaybackGraphSemitones,
+  setAudioPlaybackGraphVolumes,
+  stopAudioPlaybackGraph,
+  type AudioPlaybackGraph,
+  type PlaybackAudioBuffers
+} from "../../lib/audioEngine";
+import type { MixerVolumes } from "../../lib/audioMixer";
+import {
+  getContextTimeForMediaTime,
+  getTransportMediaTime,
+  type TransportAnchor
+} from "../../lib/audioTransport";
+import { getPlaybackAudioContext } from "../../lib/audio";
 import { updateTrackDuration } from "../../lib/api";
 import {
   clampTime,
@@ -15,24 +38,37 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export function usePlaybackState({
+  audioBuffers,
   initialDuration,
+  mixerVolumes,
+  semitones,
   trackDuration,
   trackId
 }: {
+  audioBuffers: PlaybackAudioBuffers;
   initialDuration: number;
+  mixerVolumes: MixerVolumes;
+  semitones: number;
   trackDuration: number;
   trackId: string;
 }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const remainderAudioRef = useRef<HTMLAudioElement>(null);
-  const stemAudioRef = useRef<HTMLAudioElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioContext = getPlaybackAudioContext();
+  const graphRef = useRef<AudioPlaybackGraph | null>(null);
+  const anchorRef = useRef<TransportAnchor | null>(null);
+  const currentTimeRef = useRef(0);
+  const durationRef = useRef(initialDuration);
+  const isPlayingRef = useRef(false);
+  const playbackRateRef = useRef<PlaybackRate>(defaultPlaybackRate);
+  const playRequestRef = useRef<Promise<void> | null>(null);
+  const semitonesRef = useRef(semitones);
+  const mixerVolumesRef = useRef(mixerVolumes);
   const queryClient = useQueryClient();
   const savedDurationRef = useRef(trackDuration);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [duration, setDuration] = useState(initialDuration);
+  const [duration] = useState(initialDuration);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   const [playbackRate, setPlaybackRate] =
     useState<PlaybackRate>(defaultPlaybackRate);
   const { error: durationError, mutate: saveDuration } = useMutation({
@@ -42,157 +78,334 @@ export function usePlaybackState({
     }
   });
 
+  durationRef.current = duration;
+  mixerVolumesRef.current = mixerVolumes;
+  semitonesRef.current = semitones;
+
   const durationErrorMessage = durationError
     ? getErrorMessage(durationError, "曲の長さを保存できませんでした。")
     : null;
 
+  const saveDecodedDuration = useCallback(() => {
+    if (
+      Math.abs(duration - trackDuration) <= 0.25 ||
+      Math.abs(duration - savedDurationRef.current) <= 0.25
+    ) {
+      return;
+    }
+
+    savedDurationRef.current = duration;
+    saveDuration({ duration, trackId });
+  }, [duration, saveDuration, trackDuration, trackId]);
+
+  const getCurrentTime = useCallback(() => {
+    const anchor = anchorRef.current;
+
+    if (!anchor) {
+      return currentTimeRef.current;
+    }
+
+    return getTransportMediaTime({
+      anchor,
+      contextTime: audioContext.currentTime,
+      duration: durationRef.current
+    });
+  }, [audioContext]);
+
+  const commitCurrentTime = useCallback((nextTime: number) => {
+    currentTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
+  }, []);
+
+  const stopPlayback = useCallback(
+    (nextTime = getCurrentTime()) => {
+      const graph = graphRef.current;
+
+      if (graph) {
+        stopAudioPlaybackGraph(graph);
+      }
+
+      anchorRef.current = null;
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      commitCurrentTime(nextTime);
+    },
+    [commitCurrentTime, getCurrentTime]
+  );
+
+  const restartPlayingSources = useCallback(
+    (mediaTime: number, nextPlaybackRate = playbackRateRef.current) => {
+      const graph = graphRef.current;
+
+      if (!graph) {
+        return false;
+      }
+
+      try {
+        const contextTime = restartAudioPlaybackGraph({
+          audioBuffers,
+          graph,
+          mediaTime,
+          playbackRate: nextPlaybackRate,
+          semitones: semitonesRef.current
+        });
+
+        anchorRef.current = {
+          contextTime,
+          mediaTime,
+          playbackRate: nextPlaybackRate
+        };
+        commitCurrentTime(mediaTime);
+        setPlaybackError(null);
+
+        return true;
+      } catch (error) {
+        stopPlayback(mediaTime);
+        setPlaybackError(
+          getErrorMessage(error, "音声の再生を開始できませんでした。")
+        );
+
+        return false;
+      }
+    },
+    [audioBuffers, commitCurrentTime, stopPlayback]
+  );
+
   const seekTo = useCallback(
     (time: number) => {
-      const nextTime = clampTime(time, duration);
-      const audio = audioRef.current;
+      const nextTime = clampTime(time, durationRef.current);
 
-      if (audio) {
-        audio.currentTime = nextTime;
-      }
-      if (stemAudioRef.current) {
-        stemAudioRef.current.currentTime = nextTime;
-      }
-      if (remainderAudioRef.current) {
-        remainderAudioRef.current.currentTime = nextTime;
+      saveDecodedDuration();
+
+      if (isPlayingRef.current && nextTime < durationRef.current) {
+        restartPlayingSources(nextTime);
+        return;
       }
 
-      setCurrentTime(nextTime);
+      if (isPlayingRef.current) {
+        stopPlayback(nextTime);
+        return;
+      }
+
+      commitCurrentTime(nextTime);
     },
-    [duration]
+    [
+      commitCurrentTime,
+      restartPlayingSources,
+      saveDecodedDuration,
+      stopPlayback
+    ]
   );
 
   const seekBySeconds = useCallback(
     (deltaSeconds: number) => {
-      seekTo(seekBy(currentTime, deltaSeconds, duration));
+      seekTo(seekBy(getCurrentTime(), deltaSeconds, durationRef.current));
     },
-    [currentTime, duration, seekTo]
+    [getCurrentTime, seekTo]
   );
 
+  const startPlayback = useCallback(async () => {
+    const graph = graphRef.current;
+
+    if (!graph) {
+      setPlaybackError("音声エンジンを準備しています。");
+      return;
+    }
+
+    saveDecodedDuration();
+
+    if (audioContext.state !== "running") {
+      await audioContext.resume();
+    }
+
+    if (graphRef.current !== graph || isPlayingRef.current) {
+      return;
+    }
+
+    const startTime =
+      currentTimeRef.current >= durationRef.current
+        ? 0
+        : currentTimeRef.current;
+
+    if (restartPlayingSources(startTime)) {
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+    }
+  }, [
+    audioContext,
+    restartPlayingSources,
+    saveDecodedDuration
+  ]);
+
   const togglePlayback = useCallback(() => {
-    const audio = audioRef.current;
-
-    if (!audio) {
+    if (isPlayingRef.current) {
+      stopPlayback();
       return;
     }
 
-    if (audio.paused) {
-      const stemAudio = stemAudioRef.current;
-      const remainderAudio = remainderAudioRef.current;
+    if (playRequestRef.current) {
+      return;
+    }
 
-      if (stemAudio) {
-        stemAudio.currentTime = audio.currentTime;
-      }
-      if (remainderAudio) {
-        remainderAudio.currentTime = audio.currentTime;
-      }
-
-      const playRequests: Promise<unknown>[] = [audio.play()];
-
-      if (stemAudio) {
-        playRequests.push(stemAudio.play());
-      }
-      if (remainderAudio) {
-        playRequests.push(remainderAudio.play());
-      }
-      if (audioContextRef.current?.state === "suspended") {
-        playRequests.push(audioContextRef.current.resume());
-      }
-
-      void Promise.all(playRequests).catch((error: unknown) => {
-        audio.pause();
-        stemAudio?.pause();
-        remainderAudio?.pause();
-        setPlaybackError(getErrorMessage(error, "再生に失敗しました。"));
+    const playRequest = startPlayback()
+      .catch((error: unknown) => {
+        setPlaybackError(
+          getErrorMessage(error, "音声の再生を開始できませんでした。")
+        );
+      })
+      .finally(() => {
+        if (playRequestRef.current === playRequest) {
+          playRequestRef.current = null;
+        }
       });
-      return;
-    }
 
-    audio.pause();
-    stemAudioRef.current?.pause();
-    remainderAudioRef.current?.pause();
-  }, []);
+    playRequestRef.current = playRequest;
+  }, [startPlayback, stopPlayback]);
 
   const changePlaybackRate = useCallback(
     (direction: "faster" | "slower") => {
-      setPlaybackRate((currentRate) => nextPlaybackRate(currentRate, direction));
+      const mediaTime = getCurrentTime();
+      const nextRate = nextPlaybackRate(playbackRateRef.current, direction);
+
+      playbackRateRef.current = nextRate;
+      setPlaybackRate(nextRate);
+
+      if (isPlayingRef.current) {
+        restartPlayingSources(mediaTime, nextRate);
+      }
     },
-    []
+    [getCurrentTime, restartPlayingSources]
   );
 
-  const syncMediaDuration = useCallback(
-    (nextDuration: number) => {
-      if (!Number.isFinite(nextDuration) || nextDuration <= 0) {
+  const getContextTimeForTrackTime = useCallback((mediaTime: number) => {
+    return getContextTimeForMediaTime(anchorRef.current, mediaTime);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let graph: AudioPlaybackGraph | null = null;
+
+    setIsReady(false);
+
+    void createAudioPlaybackGraph(audioContext, mixerVolumesRef.current)
+      .then((nextGraph) => {
+        if (cancelled) {
+          destroyAudioPlaybackGraph(nextGraph);
+          return;
+        }
+
+        graph = nextGraph;
+        graphRef.current = graph;
+        setPlaybackError(null);
+        setIsReady(true);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPlaybackError(
+            getErrorMessage(error, "音声エンジンを準備できませんでした。")
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+
+      if (!graph) {
         return;
       }
 
-      setDuration(nextDuration);
+      destroyAudioPlaybackGraph(graph);
 
-      if (
-        Math.abs(nextDuration - trackDuration) > 0.25 &&
-        Math.abs(nextDuration - savedDurationRef.current) > 0.25
-      ) {
-        savedDurationRef.current = nextDuration;
-        saveDuration({ duration: nextDuration, trackId });
+      if (graphRef.current === graph) {
+        graphRef.current = null;
       }
-    },
-    [saveDuration, trackDuration, trackId]
-  );
+    };
+  }, [
+    audioBuffers.original,
+    audioBuffers.remainder,
+    audioBuffers.stem,
+    audioContext
+  ]);
 
-  const syncMediaTime = useCallback((nextTime: number) => {
-    setCurrentTime(nextTime);
-  }, []);
+  useEffect(() => {
+    const graph = graphRef.current;
 
-  const markPlaying = useCallback(() => {
-    setPlaybackError(null);
-    setIsPlaying(true);
-  }, []);
+    if (!graph) {
+      return;
+    }
 
-  const markPaused = useCallback(() => {
-    setIsPlaying(false);
-  }, []);
+    setAudioPlaybackGraphVolumes(graph, mixerVolumes);
+  }, [
+    audioContext,
+    mixerVolumes.original,
+    mixerVolumes.remainder,
+    mixerVolumes.stem
+  ]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+
+    if (graph) {
+      setAudioPlaybackGraphSemitones(graph, semitones);
+    }
+  }, [semitones]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    const update = () => {
+      const nextTime = getCurrentTime();
+
+      if (nextTime >= durationRef.current) {
+        stopPlayback(durationRef.current);
+        return;
+      }
+
+      commitCurrentTime(nextTime);
+      frameId = requestAnimationFrame(update);
+    };
+
+    frameId = requestAnimationFrame(update);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [commitCurrentTime, getCurrentTime, isPlaying, stopPlayback]);
 
   return useMemo(
     () => ({
-      audioContextRef,
-      audioRef,
+      audioContext,
       changePlaybackRate,
       currentTime,
       duration,
       durationErrorMessage,
+      getContextTimeForTrackTime,
+      getCurrentTime,
       isPlaying,
-      markPaused,
-      markPlaying,
+      isReady,
       playbackError,
       playbackRate,
-      remainderAudioRef,
       seekBySeconds,
       seekTo,
-      stemAudioRef,
-      syncMediaDuration,
-      syncMediaTime,
       togglePlayback
     }),
     [
+      audioContext,
       changePlaybackRate,
       currentTime,
       duration,
       durationErrorMessage,
+      getContextTimeForTrackTime,
+      getCurrentTime,
       isPlaying,
-      markPaused,
-      markPlaying,
+      isReady,
       playbackError,
       playbackRate,
-      remainderAudioRef,
       seekBySeconds,
       seekTo,
-      stemAudioRef,
-      syncMediaDuration,
-      syncMediaTime,
       togglePlayback
     ]
   );

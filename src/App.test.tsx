@@ -156,7 +156,7 @@ describe("App", () => {
           return Response.json(savedBeatAnalysis, { status: 202 });
         }
 
-        if (url === "/media/track-1.mp3") {
+        if (url.startsWith("/media/")) {
           return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
         }
 
@@ -356,47 +356,30 @@ describe("App", () => {
   });
 
   it("toggles playback with keyboard shortcuts while a button is focused", async () => {
-    const playSpy = vi
-      .spyOn(HTMLMediaElement.prototype, "play")
-      .mockImplementation(() => Promise.resolve());
-    const pauseSpy = vi
-      .spyOn(HTMLMediaElement.prototype, "pause")
-      .mockImplementation(() => undefined);
     const { container } = render(<App />);
     const fileInput = container.querySelector<HTMLInputElement>("input[type='file']");
     const file = new File([new Uint8Array([1, 2, 3])], "phrase.mp3", {
       type: "audio/mpeg"
     });
 
-    try {
-      expect(fileInput).not.toBeNull();
-      fireEvent.change(fileInput as HTMLInputElement, {
-        target: { files: [file] }
-      });
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput as HTMLInputElement, {
+      target: { files: [file] }
+    });
 
-      await waitFor(() => {
-        expectTrackEditorLoaded("phrase.mp3");
-      });
+    await waitFor(() => {
+      expectTrackEditorLoaded("phrase.mp3");
+    });
 
-      const speedDownButton = await screen.findByTitle("速度を下げる");
-      const audio = container.querySelector<HTMLAudioElement>("audio");
+    const speedDownButton = await screen.findByTitle("速度を下げる");
 
-      expect(audio).not.toBeNull();
-      speedDownButton.focus();
-      fireEvent.keyDown(speedDownButton, { key: " " });
-      expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("audio")).not.toBeInTheDocument();
+    speedDownButton.focus();
+    fireEvent.keyDown(speedDownButton, { key: " " });
+    await screen.findByTitle("停止");
 
-      Object.defineProperty(audio as HTMLAudioElement, "paused", {
-        configurable: true,
-        value: false
-      });
-
-      fireEvent.keyDown(speedDownButton, { key: "k" });
-      expect(pauseSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      playSpy.mockRestore();
-      pauseSpy.mockRestore();
-    }
+    fireEvent.keyDown(speedDownButton, { key: "k" });
+    await screen.findByTitle("再生");
   });
 
   it("changes waveform zoom with the zoom controls", async () => {
@@ -484,9 +467,8 @@ describe("App", () => {
 
     const mixer = screen.getByLabelText("Audio mixer");
     const originalVolume = within(mixer).getByLabelText("原音の音量");
-    const audios = container.querySelectorAll("audio");
 
-    expect(audios).toHaveLength(3);
+    expect(container.querySelectorAll("audio")).toHaveLength(0);
     expect(within(mixer).getByLabelText("原音 channel")).toBeVisible();
     expect(within(mixer).getByLabelText("ギター channel")).toBeVisible();
     expect(
@@ -494,28 +476,26 @@ describe("App", () => {
     ).toBeVisible();
 
     fireEvent.change(originalVolume, { target: { value: "35" } });
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBeCloseTo(0.35);
-    });
+    expect(originalVolume).toHaveValue("35");
 
     fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBe(0);
-      expect(audios[1]?.volume).toBe(1);
-      expect(audios[2]?.volume).toBe(0);
-    });
+    expect(within(mixer).getByTitle("ギターをソロ")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
 
     fireEvent.click(within(mixer).getByTitle("ギターをミュート"));
-    await waitFor(() => {
-      expect(audios[1]?.volume).toBe(0);
-    });
+    expect(within(mixer).getByTitle("ギターをミュート")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
 
     fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
     fireEvent.click(within(mixer).getByTitle("ギター以外をミュート"));
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBeCloseTo(0.35);
-      expect(audios[2]?.volume).toBe(0);
-    });
+    expect(within(mixer).getByTitle("ギター以外をミュート")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
   });
 
   it("uses the automatically analyzed track audio for the click track", async () => {
@@ -633,27 +613,43 @@ describe("App", () => {
 
     await screen.findByTitle("現在位置にマーカー追加");
 
-    const audio = container.querySelector<HTMLAudioElement>("audio");
+    const rectMock = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        bottom: 100,
+        height: 100,
+        left: 0,
+        right: 100,
+        toJSON: () => ({}),
+        top: 0,
+        width: 100,
+        x: 0,
+        y: 0
+      });
 
-    expect(audio).not.toBeNull();
-    (audio as HTMLAudioElement).currentTime = 4;
-    fireEvent.timeUpdate(audio as HTMLAudioElement);
-    fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
+    try {
+      fireEvent.pointerDown(screen.getByRole("slider", { name: "再生位置" }), {
+        clientX: 40
+      });
+      fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
 
-    expect(screen.getByLabelText("Marker 1 time")).toHaveValue("0:04");
+      expect(screen.getByLabelText("Marker 1 time")).toHaveValue("0:04");
 
-    const labelInput = screen.getByLabelText("Marker 1 label");
-    const timeInput = screen.getByLabelText("Marker 1 time");
+      const labelInput = screen.getByLabelText("Marker 1 label");
+      const timeInput = screen.getByLabelText("Marker 1 time");
 
-    fireEvent.change(labelInput, {
-      target: { value: "Verse" }
-    });
-    fireEvent.change(timeInput, {
-      target: { value: "0:07" }
-    });
+      fireEvent.change(labelInput, {
+        target: { value: "Verse" }
+      });
+      fireEvent.change(timeInput, {
+        target: { value: "0:07" }
+      });
 
-    expect(screen.getByDisplayValue("Verse")).toBeVisible();
-    expect(screen.getByLabelText("Verse time")).toHaveValue("0:07");
+      expect(screen.getByDisplayValue("Verse")).toBeVisible();
+      expect(screen.getByLabelText("Verse time")).toHaveValue("0:07");
+    } finally {
+      rectMock.mockRestore();
+    }
   });
 
   it("drags a waveform marker to a new time", async () => {

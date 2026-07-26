@@ -6,7 +6,10 @@ import { IconButton } from "../../components/ui/Button";
 import { SectionHeader, Surface } from "../../components/ui/Surface";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { TextInput } from "../../components/ui/TextInput";
-import { decodePeaksFromArrayBuffer } from "../../lib/audio";
+import {
+  decodeAudioBuffer,
+  decodePeaksFromArrayBuffer
+} from "../../lib/audio";
 import { cn } from "../../lib/cn";
 import {
   beatGridQueryKey,
@@ -24,14 +27,9 @@ import { formatTime } from "../../lib/playback";
 import { cacheTrack } from "../../lib/trackQueryCache";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { MarkerPanel } from "./MarkerPanel";
-import { PlaybackAudio } from "./PlaybackAudio";
 import { StemMixer } from "./StemMixer";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
-import {
-  pitchShiftWindowSeconds,
-  useAudioPitchShift
-} from "./useAudioPitchShift";
 import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
@@ -56,6 +54,15 @@ async function decodeTrackMedia(mediaUrl: string) {
   );
 
   return decodePeaksFromArrayBuffer(arrayBuffer);
+}
+
+async function decodePlaybackMedia(mediaUrl: string) {
+  const arrayBuffer = await fetchMediaArrayBuffer(
+    mediaUrl,
+    "分離済み音声ファイルを読み込めませんでした。"
+  );
+
+  return decodeAudioBuffer(arrayBuffer);
 }
 
 export function TrackEditorPage({
@@ -88,8 +95,42 @@ export function TrackEditorPage({
       ? decodedTrackQueryKey(track.id, track.mediaUrl)
       : ["track", trackId, "decoded"]
   });
+  const stemMediaUrl = track?.separation?.mediaUrl ?? null;
+  const remainderMediaUrl =
+    track?.separation?.remainderMediaUrl ?? null;
+  const stemAudioQuery = useQuery({
+    enabled: Boolean(stemMediaUrl),
+    queryFn: () => {
+      if (!stemMediaUrl) {
+        throw new Error("分離済み音声ファイルがありません。");
+      }
 
-  if (trackQuery.isLoading || decodedQuery.isLoading) {
+      return decodePlaybackMedia(stemMediaUrl);
+    },
+    queryKey: ["media", "decoded", stemMediaUrl]
+  });
+  const remainderAudioQuery = useQuery({
+    enabled: Boolean(remainderMediaUrl),
+    queryFn: () => {
+      if (!remainderMediaUrl) {
+        throw new Error("分離済み音声ファイルがありません。");
+      }
+
+      return decodePlaybackMedia(remainderMediaUrl);
+    },
+    queryKey: ["media", "decoded", remainderMediaUrl]
+  });
+  const isPlaybackMediaLoading =
+    (Boolean(stemMediaUrl) && stemAudioQuery.isLoading) ||
+    (Boolean(remainderMediaUrl) && remainderAudioQuery.isLoading);
+  const playbackMediaError =
+    stemAudioQuery.error ?? remainderAudioQuery.error;
+
+  if (
+    trackQuery.isLoading ||
+    decodedQuery.isLoading ||
+    isPlaybackMediaLoading
+  ) {
     return (
       <>
         <AppHeader
@@ -103,7 +144,13 @@ export function TrackEditorPage({
     );
   }
 
-  if (trackQuery.isError || decodedQuery.isError || !track || !decodedQuery.data) {
+  if (
+    trackQuery.isError ||
+    decodedQuery.isError ||
+    playbackMediaError ||
+    !track ||
+    !decodedQuery.data
+  ) {
     return (
       <>
         <AppHeader
@@ -115,7 +162,7 @@ export function TrackEditorPage({
         <TrackLoadingPanel
           state="error"
           message={getErrorMessage(
-            trackQuery.error ?? decodedQuery.error,
+            trackQuery.error ?? decodedQuery.error ?? playbackMediaError,
             "保存済みMP3を読み込めませんでした。"
           )}
         />
@@ -129,6 +176,8 @@ export function TrackEditorPage({
       track={track}
       decoded={decodedQuery.data}
       navigateToLibrary={navigateToLibrary}
+      remainderAudioBuffer={remainderAudioQuery.data ?? null}
+      stemAudioBuffer={stemAudioQuery.data ?? null}
     />
   );
 }
@@ -167,10 +216,14 @@ function TrackLoadingPanel({
 function TrackEditor({
   decoded,
   navigateToLibrary,
+  remainderAudioBuffer,
+  stemAudioBuffer,
   track
 }: {
   decoded: DecodedAudio;
   navigateToLibrary: () => void;
+  remainderAudioBuffer: AudioBuffer | null;
+  stemAudioBuffer: AudioBuffer | null;
   track: TrackDetail;
 }) {
   const queryClient = useQueryClient();
@@ -197,19 +250,23 @@ function TrackEditor({
   });
   const beatAnalysis = beatGridQuery.data ?? null;
   const beatGrid = beatGridQuery.data?.beatGrid ?? null;
-  const playback = usePlaybackState({
-    initialDuration: decoded.duration || track.duration,
-    trackDuration: track.duration,
-    trackId: track.id
-  });
   const mixer = useStemMixer();
   const transpose = useTranspose();
-  const pitchShift = useAudioPitchShift({
-    playback,
-    remainderMediaUrl:
-      track.separation?.remainderMediaUrl ?? null,
+  const playback = usePlaybackState({
+    audioBuffers: {
+      original: decoded.audioBuffer,
+      remainder: remainderAudioBuffer,
+      stem: stemAudioBuffer
+    },
+    initialDuration: decoded.duration || track.duration,
+    mixerVolumes: {
+      original: mixer.originalVolume,
+      remainder: mixer.remainderVolume,
+      stem: mixer.stemVolume
+    },
     semitones: transpose.semitones,
-    stemMediaUrl: track.separation?.mediaUrl ?? null
+    trackDuration: track.duration,
+    trackId: track.id
   });
   const markers = useMarkersState({
     initialMarkers: track.markers,
@@ -220,10 +277,9 @@ function TrackEditor({
     duration: playback.duration
   });
   const clickTrack = useClickTrack({
-    audioContext: pitchShift.audioContext,
+    audioContext: playback.audioContext,
     beatGrid,
-    outputLatencySeconds:
-      transpose.semitones === 0 ? 0 : pitchShiftWindowSeconds,
+    outputLatencySeconds: 0,
     playback
   });
   const beatGridErrorMessage =
@@ -241,9 +297,12 @@ function TrackEditor({
     playback.playbackError ??
     markers.markerSaveErrorMessage ??
     clickTrack.clickErrorMessage ??
-    pitchShift.pitchShiftErrorMessage ??
     playback.durationErrorMessage;
-  const loadState = errorMessage ? "error" : "ready";
+  const loadState = errorMessage
+    ? "error"
+    : playback.isReady
+      ? "ready"
+      : "loading";
   const titleMessage = titleMutation.isPending
     ? `${titleMutation.variables?.title.trim() ?? track.title} を保存しています。`
     : titleMutation.isError
@@ -280,17 +339,6 @@ function TrackEditor({
 
   return (
     <>
-      <PlaybackAudio
-        mediaUrl={track.mediaUrl}
-        originalVolume={mixer.originalVolume}
-        playback={playback}
-        remainderMediaUrl={
-          track.separation?.remainderMediaUrl ?? null
-        }
-        remainderVolume={mixer.remainderVolume}
-        stemMediaUrl={track.separation?.mediaUrl ?? null}
-        stemVolume={mixer.stemVolume}
-      />
       <KeyboardShortcuts markers={markers} playback={playback} />
       <AppHeader
         subtitle={`${track.title} ・ ${

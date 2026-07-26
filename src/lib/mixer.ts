@@ -8,9 +8,6 @@ export type MixerChannel = {
 
 export type MixerState = Record<MixerChannelId, MixerChannel>;
 
-const audibleFollowerSyncThreshold = 0.5;
-const mutedFollowerSyncThreshold = 0.075;
-
 export const defaultMixerState: MixerState = {
   original: {
     muted: false,
@@ -49,49 +46,4 @@ export function getEffectiveMixerVolume(
   }
 
   return clampMixerVolume(channel.volume);
-}
-
-export function getMixerPlaybackClock({
-  hasRemainder,
-  hasStem,
-  originalVolume,
-  remainderVolume,
-  stemVolume
-}: {
-  hasRemainder: boolean;
-  hasStem: boolean;
-  originalVolume: number;
-  remainderVolume: number;
-  stemVolume: number;
-}): MixerChannelId {
-  if (originalVolume > 0) {
-    return "original";
-  }
-  if (hasStem && stemVolume > 0) {
-    return "stem";
-  }
-  if (hasRemainder && remainderVolume > 0) {
-    return "remainder";
-  }
-
-  return "original";
-}
-
-export function shouldResyncMixerFollower({
-  driftSeconds,
-  followerVolume
-}: {
-  driftSeconds: number;
-  followerVolume: number;
-}) {
-  if (!Number.isFinite(driftSeconds)) {
-    return false;
-  }
-
-  const threshold =
-    followerVolume === 0
-      ? mutedFollowerSyncThreshold
-      : audibleFollowerSyncThreshold;
-
-  return Math.abs(driftSeconds) > threshold;
 }
