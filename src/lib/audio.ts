@@ -6,7 +6,29 @@ export type DecodedAudio = {
   peaks: WaveformPeak[];
 };
 
+type AudioSessionType =
+  | "ambient"
+  | "auto"
+  | "play-and-record"
+  | "playback"
+  | "transient"
+  | "transient-solo";
+
+type AudioSessionNavigator = {
+  readonly audioSession?: {
+    type: AudioSessionType;
+  };
+};
+
 let playbackAudioContext: AudioContext | null = null;
+
+export function configurePlaybackAudioSession(
+  navigatorObject: AudioSessionNavigator
+) {
+  if (navigatorObject.audioSession) {
+    navigatorObject.audioSession.type = "playback";
+  }
+}
 
 export function getPlaybackAudioContext() {
   if (
@@ -15,6 +37,8 @@ export function getPlaybackAudioContext() {
   ) {
     return playbackAudioContext;
   }
+
+  configurePlaybackAudioSession(navigator as AudioSessionNavigator);
 
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
