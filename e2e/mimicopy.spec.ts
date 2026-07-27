@@ -79,16 +79,9 @@ async function expectInitialPlaybackPosition(page: Page) {
     "0:00 /"
   );
 
-  const mediaState = await page
-    .locator('audio[aria-label="Original audio"]')
-    .evaluate((audioElement) => {
-      const audio = audioElement as HTMLAudioElement;
-
-      return {
-        currentTime: audio.currentTime,
-        duration: audio.duration
-      };
-    });
+  const duration = Number(
+    await page.getByLabel("再生位置").getAttribute("aria-valuemax")
+  );
   const playheadLeft = await page
     .locator(".waveformSurface > div")
     .last()
@@ -109,10 +102,27 @@ async function expectInitialPlaybackPosition(page: Page) {
       };
     });
 
-  expect(mediaState.currentTime).toBe(0);
-  expect(mediaState.duration).toBeGreaterThan(0);
+  expect(duration).toBeGreaterThan(0);
+  await expect(page.locator("audio")).toHaveCount(0);
   expect(playheadLeft.style).toContain("--playhead-left: 0%");
   expect(playheadLeft.computedLeft).toBe(0);
+}
+
+async function seekWaveformToRatio(page: Page, ratio: number) {
+  await page.getByRole("slider", { name: "再生位置" }).evaluate(
+    (element, targetRatio) => {
+      const bounds = element.getBoundingClientRect();
+
+      element.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          clientX: bounds.left + bounds.width * targetRatio,
+          clientY: bounds.top + bounds.height / 2
+        })
+      );
+    },
+    ratio
+  );
 }
 
 async function mockYoutubeConversion(page: Page) {
@@ -305,38 +315,27 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.keyboard.press("Enter");
   await expect(page.getByTitle("再生")).toBeVisible();
 
-  await page.evaluate(() => {
-    const audio = document.querySelector("audio");
-
-    if (!audio) {
-      throw new Error("Audio element was not found.");
-    }
-
-    audio.currentTime = 0.5;
-    audio.dispatchEvent(new Event("timeupdate", { bubbles: true }));
-  });
+  await seekWaveformToRatio(page, 1 / 6);
   await page.keyboard.press("ArrowLeft");
-  await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
-    )
-    .toBeLessThan(0.1);
+  await expect(page.getByLabel("再生位置")).toHaveAttribute(
+    "aria-valuenow",
+    "0"
+  );
   await page.keyboard.press("ArrowRight");
   await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
+    .poll(async () =>
+      Number(await page.getByLabel("再生位置").getAttribute("aria-valuenow"))
     )
     .toBeGreaterThan(0.9);
   await page.keyboard.press("KeyJ");
-  await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
-    )
-    .toBeLessThan(0.1);
+  await expect(page.getByLabel("再生位置")).toHaveAttribute(
+    "aria-valuenow",
+    "0"
+  );
   await page.keyboard.press("KeyL");
   await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
+    .poll(async () =>
+      Number(await page.getByLabel("再生位置").getAttribute("aria-valuenow"))
     )
     .toBeGreaterThan(0.9);
 
@@ -351,17 +350,11 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
     "ready"
   );
-  await page
-    .locator('audio[aria-label="Original audio"]')
-    .evaluate((audio) => {
-      (audio as HTMLAudioElement).currentTime = 0;
-    });
+  await seekWaveformToRatio(page, 0);
   await page.getByTitle("再生").click();
   await expect
-    .poll(() =>
-      page
-        .locator('audio[aria-label="Original audio"]')
-        .evaluate((audio) => (audio as HTMLAudioElement).currentTime)
+    .poll(async () =>
+      Number(await page.getByLabel("再生位置").getAttribute("aria-valuenow"))
     )
     .toBeGreaterThan(0.1);
   await page.getByTitle("停止").click();
@@ -376,11 +369,10 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await expect(page.getByLabel("Marker 1 label")).toHaveValue("Marker 1");
   await expect(page.getByLabel("Marker 1 time")).toHaveValue("0:00");
   await page.getByTitle("選択マーカーへ戻る").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
-    )
-    .toBeLessThan(0.1);
+  await expect(page.getByLabel("再生位置")).toHaveAttribute(
+    "aria-valuenow",
+    "0"
+  );
   await page.getByTitle("マーカー削除").click();
   await expect(page.getByText("No markers")).toBeVisible();
 
@@ -427,19 +419,6 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
 
-  const mediaState = await page
-    .locator('audio[aria-label="Original audio"]')
-    .evaluate((audioElement) => {
-      const audio = audioElement as HTMLAudioElement;
-
-      return {
-        duration: audio.duration,
-        src: audio.currentSrc
-      };
-    });
-
-  expect(mediaState.src).toContain("/media/e2e-youtube.mp3");
-  expect(mediaState.duration).toBeGreaterThan(0);
   const mixer = page.getByLabel("Audio mixer");
 
   await expect(mixer.getByLabel("原音 channel")).toBeVisible();
@@ -459,96 +438,16 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
     "true"
   );
 
-  const originalAudio = page.locator('audio[aria-label="Original audio"]');
-  const stemAudio = page.locator(
-    'audio[aria-label="Separated stem audio"]'
-  );
-  const remainderAudio = page.locator(
-    'audio[aria-label="Separated remainder audio"]'
-  );
-
-  await expect
-    .poll(async () => {
-      return page.locator("audio").evaluateAll(
-        (elements) =>
-          elements.length === 3 &&
-          elements.every(
-            (element) =>
-              (element as HTMLAudioElement).readyState >=
-              HTMLMediaElement.HAVE_CURRENT_DATA
-          )
-      );
-    })
-    .toBe(true);
-  await stemAudio.evaluate((element) => {
-    const audio = element as HTMLAudioElement;
-
-    audio.play = () => Promise.resolve();
-  });
-  await remainderAudio.evaluate((element) => {
-    const audio = element as HTMLAudioElement;
-
-    audio.play = () => Promise.resolve();
-  });
-  await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio, remainderAudio] =
-      elements as [
-        HTMLAudioElement,
-        HTMLAudioElement,
-        HTMLAudioElement
-      ];
-
-    originalAudio.currentTime = 0.5;
-    stemAudio.currentTime = 0.5;
-    remainderAudio.currentTime = 0.5;
-    originalAudio.dispatchEvent(new Event("play"));
-  });
+  await expect(page.locator("audio")).toHaveCount(0);
+  await seekWaveformToRatio(page, 1 / 6);
+  await page.getByTitle("再生").click();
   await expect(page.getByTitle("停止")).toBeVisible();
-  await page.waitForTimeout(100);
-  await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio, remainderAudio] =
-      elements as [
-        HTMLAudioElement,
-        HTMLAudioElement,
-        HTMLAudioElement
-      ];
-
-    stemAudio.dataset.seekEvents = "0";
-    remainderAudio.dataset.seekEvents = "0";
-    stemAudio.addEventListener("seeking", () => {
-      stemAudio.dataset.seekEvents = String(
-        Number(stemAudio.dataset.seekEvents ?? "0") + 1
-      );
-    });
-    remainderAudio.addEventListener("seeking", () => {
-      remainderAudio.dataset.seekEvents = String(
-        Number(remainderAudio.dataset.seekEvents ?? "0") + 1
-      );
-    });
-    originalAudio.currentTime = 0.4;
-  });
   await expect
-    .poll(async () => {
-      const times = await page.locator("audio").evaluateAll((elements) =>
-        elements.map((element) => (element as HTMLAudioElement).currentTime)
-      );
-
-      const clockTime = times[1] ?? 0;
-
-      return Math.max(
-        Math.abs((times[0] ?? 0) - clockTime),
-        Math.abs((times[2] ?? 0) - clockTime)
-      );
-    })
-    .toBeLessThan(0.075);
-  await page.waitForTimeout(100);
-  await expect(
-    stemAudio
-  ).toHaveAttribute("data-seek-events", "0");
-  await expect
-    .poll(async () => remainderAudio.getAttribute("data-seek-events"))
-    .toBe("0");
-  await originalAudio.dispatchEvent("pause");
+    .poll(async () =>
+      Number(await page.getByLabel("再生位置").getAttribute("aria-valuenow"))
+    )
+    .toBeGreaterThan(0);
+  await page.getByTitle("停止").click();
   await expect(page.getByTitle("再生")).toBeVisible();
 
   await page.getByTitle("ライブラリへ戻る").click();
@@ -649,20 +548,6 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
-
-  const mediaState = await page
-    .locator('audio[aria-label="Original audio"]')
-    .evaluate((audioElement) => {
-    const audio = audioElement as HTMLAudioElement;
-
-    return {
-      duration: audio.duration,
-      src: audio.currentSrc
-    };
-    });
-
-  expect(mediaState.src).toContain("/media/");
-  expect(mediaState.duration).toBeGreaterThan(0);
 
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
