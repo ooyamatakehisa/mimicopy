@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import {
+  getMixerFollowerPlaybackRate,
   getMixerPlaybackClock,
-  shouldResyncMixerFollower
+  shouldHardSyncMixerFollower
 } from "../../lib/mixer";
 import type { PlaybackState } from "./usePlaybackState";
 
@@ -43,6 +44,7 @@ export function PlaybackAudio({
       return;
     }
 
+    audio.preservesPitch = true;
     audio.playbackRate = playbackRate;
     audio.volume = originalVolume;
   }, [audioRef, mediaUrl, originalVolume, playbackRate]);
@@ -54,6 +56,7 @@ export function PlaybackAudio({
       return;
     }
 
+    stemAudio.preservesPitch = true;
     stemAudio.playbackRate = playbackRate;
     stemAudio.volume = stemVolume;
   }, [playbackRate, stemAudioRef, stemMediaUrl, stemVolume]);
@@ -65,6 +68,7 @@ export function PlaybackAudio({
       return;
     }
 
+    remainderAudio.preservesPitch = true;
     remainderAudio.playbackRate = playbackRate;
     remainderAudio.volume = remainderVolume;
   }, [
@@ -136,20 +140,40 @@ export function PlaybackAudio({
         { audio: remainderAudio, volume: remainderVolume }
       ];
 
+      if (clockAudio.playbackRate !== playbackRate) {
+        clockAudio.playbackRate = playbackRate;
+      }
       syncMediaTime(clockAudio.currentTime);
       for (const follower of followers) {
         if (
           follower.audio &&
           follower.audio !== clockAudio &&
           follower.audio.readyState >=
-            HTMLMediaElement.HAVE_CURRENT_DATA &&
-          shouldResyncMixerFollower({
-            driftSeconds:
-              follower.audio.currentTime - clockAudio.currentTime,
-            followerVolume: follower.volume
-          })
+            HTMLMediaElement.HAVE_CURRENT_DATA
         ) {
-          follower.audio.currentTime = clockAudio.currentTime;
+          const driftSeconds =
+            follower.audio.currentTime - clockAudio.currentTime;
+
+          if (
+            shouldHardSyncMixerFollower({
+              driftSeconds,
+              followerVolume: follower.volume
+            })
+          ) {
+            follower.audio.currentTime = clockAudio.currentTime;
+          }
+
+          const correctedPlaybackRate =
+            getMixerFollowerPlaybackRate({
+              basePlaybackRate: playbackRate,
+              currentPlaybackRate: follower.audio.playbackRate,
+              driftSeconds,
+              followerVolume: follower.volume
+            });
+
+          if (follower.audio.playbackRate !== correctedPlaybackRate) {
+            follower.audio.playbackRate = correctedPlaybackRate;
+          }
         }
       }
 
@@ -160,11 +184,22 @@ export function PlaybackAudio({
 
     return () => {
       cancelAnimationFrame(frameId);
+
+      for (const mediaElement of [
+        audio,
+        stemAudioRef.current,
+        remainderAudioRef.current
+      ]) {
+        if (mediaElement) {
+          mediaElement.playbackRate = playbackRate;
+        }
+      }
     };
   }, [
     audioRef,
     isPlaying,
     originalVolume,
+    playbackRate,
     remainderAudioRef,
     remainderVolume,
     stemAudioRef,

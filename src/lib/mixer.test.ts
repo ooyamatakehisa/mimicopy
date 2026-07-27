@@ -1,8 +1,9 @@
 import {
   defaultMixerState,
   getEffectiveMixerVolume,
+  getMixerFollowerPlaybackRate,
   getMixerPlaybackClock,
-  shouldResyncMixerFollower
+  shouldHardSyncMixerFollower
 } from "./mixer";
 
 describe("mixer helpers", () => {
@@ -86,24 +87,83 @@ describe("mixer helpers", () => {
     ).toBe("remainder");
   });
 
-  it("hard-syncs muted followers without repeatedly seeking audible audio", () => {
+  it("hard-syncs only muted followers", () => {
     expect(
-      shouldResyncMixerFollower({
+      shouldHardSyncMixerFollower({
         driftSeconds: 0.08,
         followerVolume: 0
       })
     ).toBe(true);
     expect(
-      shouldResyncMixerFollower({
+      shouldHardSyncMixerFollower({
         driftSeconds: 0.08,
         followerVolume: 1
       })
     ).toBe(false);
     expect(
-      shouldResyncMixerFollower({
-        driftSeconds: 0.51,
+      shouldHardSyncMixerFollower({
+        driftSeconds: 2,
         followerVolume: 1
       })
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("corrects audible drift with small playback-rate changes", () => {
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 1,
+        driftSeconds: 0.1,
+        followerVolume: 1
+      })
+    ).toBeCloseTo(0.98);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 1,
+        driftSeconds: -0.1,
+        followerVolume: 1
+      })
+    ).toBeCloseTo(1.02);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 0.75,
+        currentPlaybackRate: 0.75,
+        driftSeconds: 0.01,
+        followerVolume: 1
+      })
+    ).toBe(0.75);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 1,
+        driftSeconds: 1,
+        followerVolume: 1
+      })
+    ).toBe(0.98);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 1,
+        driftSeconds: 0.1,
+        followerVolume: 0
+      })
+    ).toBe(1);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 0.98,
+        driftSeconds: 0.02,
+        followerVolume: 1
+      })
+    ).toBe(0.98);
+    expect(
+      getMixerFollowerPlaybackRate({
+        basePlaybackRate: 1,
+        currentPlaybackRate: 0.98,
+        driftSeconds: 0.005,
+        followerVolume: 1
+      })
+    ).toBe(1);
   });
 });

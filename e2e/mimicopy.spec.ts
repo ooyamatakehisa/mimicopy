@@ -548,6 +548,63 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect
     .poll(async () => remainderAudio.getAttribute("data-seek-events"))
     .toBe("0");
+
+  await mixer.getByTitle("ギターをソロ").click();
+  await expect(mixer.getByTitle("ギターをソロ")).toHaveAttribute(
+    "aria-pressed",
+    "false"
+  );
+  await page.locator("audio").evaluateAll((elements) => {
+    const [originalAudio, stemAudio, remainderAudio] =
+      elements as [
+        HTMLAudioElement,
+        HTMLAudioElement,
+        HTMLAudioElement
+      ];
+
+    const fixMediaTime = (
+      audio: HTMLAudioElement,
+      initialTime: number
+    ) => {
+      let mediaTime = initialTime;
+
+      Object.defineProperty(audio, "currentTime", {
+        configurable: true,
+        get: () => mediaTime,
+        set: (nextTime: number) => {
+          mediaTime = nextTime;
+          audio.dispatchEvent(new Event("seeking"));
+        }
+      });
+    };
+
+    fixMediaTime(originalAudio, 0.5);
+    fixMediaTime(stemAudio, 0.6);
+    fixMediaTime(remainderAudio, 0.4);
+    stemAudio.dataset.seekEvents = "0";
+    remainderAudio.dataset.seekEvents = "0";
+  });
+  await expect
+    .poll(async () =>
+      stemAudio.evaluate((element) => {
+        return (element as HTMLAudioElement).playbackRate;
+      })
+    )
+    .toBeLessThan(1);
+  await expect
+    .poll(async () =>
+      remainderAudio.evaluate((element) => {
+        return (element as HTMLAudioElement).playbackRate;
+      })
+    )
+    .toBeGreaterThan(1);
+  await page.waitForTimeout(100);
+  await expect(stemAudio).toHaveAttribute("data-seek-events", "0");
+  await expect(remainderAudio).toHaveAttribute(
+    "data-seek-events",
+    "0"
+  );
+
   await originalAudio.dispatchEvent("pause");
   await expect(page.getByTitle("再生")).toBeVisible();
 
