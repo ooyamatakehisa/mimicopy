@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { Context } from "tone/build/esm/core/context/Context.js";
 import type { PitchShift } from "tone/build/esm/effect/PitchShift.js";
+import {
+  configurePlaybackAudioSession,
+  type AudioSessionNavigator
+} from "../../lib/audioSession";
 import type { PlaybackState } from "./usePlaybackState";
 
 export const pitchShiftWindowSeconds = 0.1;
@@ -62,6 +66,8 @@ export function useAudioPitchShift({
     if (!audio || !AudioContextCtor) {
       return undefined;
     }
+
+    configurePlaybackAudioSession(navigator as AudioSessionNavigator);
 
     let graph: PitchShiftGraph | null = null;
     let cancelled = false;

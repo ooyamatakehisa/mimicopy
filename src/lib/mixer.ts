@@ -8,8 +8,12 @@ export type MixerChannel = {
 
 export type MixerState = Record<MixerChannelId, MixerChannel>;
 
-const audibleFollowerSyncThreshold = 0.5;
 const mutedFollowerSyncThreshold = 0.075;
+const audibleDriftCorrectionStartThreshold = 0.03;
+const audibleDriftCorrectionStopThreshold = 0.01;
+const playbackRateCorrectionRatio = 0.02;
+const minimumMediaPlaybackRate = 0.25;
+const maximumMediaPlaybackRate = 4;
 
 export const defaultMixerState: MixerState = {
   original: {
@@ -77,7 +81,7 @@ export function getMixerPlaybackClock({
   return "original";
 }
 
-export function shouldResyncMixerFollower({
+export function shouldHardSyncMixerFollower({
   driftSeconds,
   followerVolume
 }: {
@@ -88,10 +92,53 @@ export function shouldResyncMixerFollower({
     return false;
   }
 
-  const threshold =
-    followerVolume === 0
-      ? mutedFollowerSyncThreshold
-      : audibleFollowerSyncThreshold;
+  return (
+    followerVolume === 0 &&
+    Math.abs(driftSeconds) > mutedFollowerSyncThreshold
+  );
+}
 
-  return Math.abs(driftSeconds) > threshold;
+export function getMixerFollowerPlaybackRate({
+  basePlaybackRate,
+  currentPlaybackRate,
+  driftSeconds,
+  followerVolume
+}: {
+  basePlaybackRate: number;
+  currentPlaybackRate: number;
+  driftSeconds: number;
+  followerVolume: number;
+}) {
+  if (
+    !Number.isFinite(basePlaybackRate) ||
+    basePlaybackRate <= 0 ||
+    !Number.isFinite(currentPlaybackRate) ||
+    !Number.isFinite(driftSeconds) ||
+    followerVolume === 0
+  ) {
+    return basePlaybackRate;
+  }
+
+  const isCorrecting =
+    Math.abs(currentPlaybackRate - basePlaybackRate) > 0.001;
+  const threshold = isCorrecting
+    ? audibleDriftCorrectionStopThreshold
+    : audibleDriftCorrectionStartThreshold;
+
+  if (Math.abs(driftSeconds) <= threshold) {
+    return basePlaybackRate;
+  }
+
+  const correction =
+    driftSeconds > 0
+      ? -playbackRateCorrectionRatio
+      : playbackRateCorrectionRatio;
+
+  return Math.max(
+    minimumMediaPlaybackRate,
+    Math.min(
+      maximumMediaPlaybackRate,
+      basePlaybackRate * (1 + correction)
+    )
+  );
 }
