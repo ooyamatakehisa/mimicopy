@@ -18,6 +18,7 @@ describe("useClickTrack", () => {
   });
 
   it("uses the shared audio context without taking ownership of it", () => {
+    const audio = document.createElement("audio");
     const destination = {} as AudioDestinationNode;
     const close = vi.fn(() => Promise.resolve());
     const resume = vi.fn(() => Promise.resolve());
@@ -29,10 +30,10 @@ describe("useClickTrack", () => {
     } as unknown as AudioContext;
 
     const playback = {
+      audioRef: { current: audio },
       currentTime: 0,
-      getContextTimeForTrackTime: () => null,
-      getCurrentTime: () => 0,
       isPlaying: false,
+      playbackRate: 1
     } as unknown as PlaybackState;
     const { result, unmount } = renderHook(() =>
       useClickTrack({

@@ -1,42 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 
-vi.mock("tone/build/esm/core/context/Context.js", () => ({
-  Context: class ContextMock {
-    rawContext: AudioContext;
-
-    constructor({ context }: { context: AudioContext }) {
-      this.rawContext = context;
-    }
-
-    initialize() {
-      return this;
-    }
-  }
-}));
-
-vi.mock("tone/build/esm/source/buffer/GrainPlayer.js", () => ({
-  GrainPlayer: class GrainPlayerMock {
-    detune: number;
-    playbackRate: number;
-    connect = vi.fn();
-    dispose = vi.fn();
-    start = vi.fn();
-    stop = vi.fn();
-
-    constructor({
-      detune,
-      playbackRate
-    }: {
-      detune: number;
-      playbackRate: number;
-    }) {
-      this.detune = detune;
-      this.playbackRate = playbackRate;
-    }
-  }
-}));
-
 class ResizeObserverMock {
   observe() {}
   unobserve() {}
@@ -53,23 +17,16 @@ const audioBuffer = {
 class AudioContextMock {
   currentTime = 0;
   destination = {};
-  sampleRate = 44_100;
-  state = "running";
+  createMediaElementSource = vi.fn(() => ({
+    connect: vi.fn(),
+    disconnect: vi.fn()
+  }));
   createGain = vi.fn(() => ({
     connect: vi.fn(),
-    disconnect: vi.fn(),
     gain: {
       exponentialRampToValueAtTime: vi.fn(),
-      setValueAtTime: vi.fn(),
-      value: 1
+      setValueAtTime: vi.fn()
     }
-  }));
-  createBufferSource = vi.fn(() => ({
-    buffer: null,
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn()
   }));
   createOscillator = vi.fn(() => ({
     connect: vi.fn(),
