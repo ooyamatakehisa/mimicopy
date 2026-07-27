@@ -3,7 +3,11 @@ import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { cn } from "../../lib/cn";
 import type { MixerChannelId } from "../../lib/mixer";
-import { stemLabels, type TrackSeparation } from "../../lib/separation";
+import {
+  formatEstimatedRemainingTime,
+  stemLabels,
+  type TrackSeparation
+} from "../../lib/separation";
 import type { StemMixerState } from "./useStemMixer";
 
 type StemMixerProps = {
@@ -23,7 +27,7 @@ export function StemMixer({ mixer, separation }: StemMixerProps) {
       aria-label="Audio mixer"
       className="mx-4 mt-4 grid gap-3 rounded-[1.75rem] border border-white/8 bg-black/15 p-3"
     >
-      <div className="flex min-w-0 items-center justify-between gap-3 px-1">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-1">
         <div className="flex min-w-0 items-center gap-2">
           <AudioLines className="shrink-0 text-teal" size={18} />
           <strong className="truncate text-sm text-ink">Audio mixer</strong>
@@ -68,13 +72,50 @@ function SeparationStatus({
     separation.status === "queued" ||
     separation.status === "running"
   ) {
+    const progress = separation.progress;
+
     return (
-      <span className="flex items-center gap-2 text-xs text-muted">
-        <LoaderCircle className="animate-spin" size={14} />
-        {separation.status === "queued"
-          ? "分離待ち"
-          : `${stemLabels[separation.targetStem]}を分離中`}
-      </span>
+      <div
+        aria-label="音源分離の進捗"
+        className="grid w-full max-w-72 gap-1.5 text-xs text-muted"
+      >
+        <span className="flex items-center justify-end gap-2">
+          <LoaderCircle className="animate-spin" size={14} />
+          {separation.status === "queued"
+            ? "分離待ち"
+            : progress
+              ? `${stemLabels[separation.targetStem]}を分離中 ${progress.percentage}%`
+              : `${stemLabels[separation.targetStem]}を分離中`}
+        </span>
+        {separation.status === "running" && progress ? (
+          <>
+            <span className="flex items-center justify-between gap-3 tabular-nums">
+              <span>
+                {progress.completedSegments} / {progress.totalSegments}{" "}
+                セグメント完了
+              </span>
+              <span>
+                {formatEstimatedRemainingTime(
+                  progress.estimatedRemainingSeconds
+                )}
+              </span>
+            </span>
+            <span
+              aria-label={`${progress.percentage}%完了`}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={progress.percentage}
+              className="h-1.5 overflow-hidden rounded-full bg-white/10"
+              role="progressbar"
+            >
+              <span
+                className="block h-full rounded-full bg-teal transition-[width] duration-500"
+                style={{ width: `${progress.percentage}%` }}
+              />
+            </span>
+          </>
+        ) : null}
+      </div>
     );
   }
 

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Final
+from typing import Callable, Final
 
 import numpy as np
 import soundfile as sf
@@ -19,6 +19,7 @@ HOP_LENGTH: Final = 512
 NUM_CHANNELS: Final = 2
 SILENCE_RMS_THRESHOLD: Final = 1e-5
 STEM_NAMES: Final = ("bass", "drums", "other", "vocals", "guitar", "piano")
+SeparationProgressCallback = Callable[[int, int, float | None], None]
 
 
 def periodic_hann(length: int) -> np.ndarray:
@@ -112,6 +113,21 @@ def is_effectively_silent(audio: np.ndarray) -> bool:
     squared = np.square(audio, dtype=np.float64)
     rms = float(np.sqrt(np.mean(squared)))
     return rms < SILENCE_RMS_THRESHOLD
+
+
+def estimate_remaining_seconds(
+    elapsed_seconds: float,
+    completed_segments: int,
+    total_segments: int,
+) -> float | None:
+    if completed_segments <= 0 or total_segments <= 0:
+        return None
+
+    remaining_segments = max(0, total_segments - completed_segments)
+    return max(
+        0.0,
+        (elapsed_seconds / completed_segments) * remaining_segments,
+    )
 
 
 def select_target_and_remainder_spectra(
@@ -291,6 +307,7 @@ class StemSeparator:
         output_path: Path,
         remainder_output_path: Path,
         target_stem: str,
+        on_progress: SeparationProgressCallback | None = None,
     ) -> float:
         if target_stem not in STEM_NAMES:
             raise ValueError(f"Unsupported target stem: {target_stem}")
@@ -307,7 +324,9 @@ class StemSeparator:
             working_dir = Path(directory)
             audio = decode_audio(input_path, working_dir)
             separated, remainder = self._separate_target_and_remainder(
-                audio, target_stem
+                audio,
+                target_stem,
+                on_progress=on_progress,
             )
             if not np.isfinite(separated).all() or not np.isfinite(
                 remainder
@@ -334,7 +353,11 @@ class StemSeparator:
         return time.monotonic() - started
 
     def _separate_target_and_remainder(
-        self, audio: np.ndarray, target_stem: str
+        self,
+        audio: np.ndarray,
+        target_stem: str,
+        *,
+        on_progress: SeparationProgressCallback | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         target_index = STEM_NAMES.index(target_stem)
         overlap_samples = int(CHUNK_SAMPLES * self.overlap)
@@ -346,6 +369,9 @@ class StemSeparator:
         remainder_output = np.zeros(
             (NUM_CHANNELS, sample_count), dtype=np.float32
         )
+        progress_started = time.monotonic()
+        if on_progress is not None:
+            on_progress(0, len(starts), None)
 
         for segment_index, start in enumerate(starts):
             segment_started = time.monotonic()
@@ -469,5 +495,16 @@ class StemSeparator:
                 f"{time.monotonic() - segment_started:.3f}s",
                 flush=True,
             )
+            if on_progress is not None:
+                completed_segments = segment_index + 1
+                on_progress(
+                    completed_segments,
+                    len(starts),
+                    estimate_remaining_seconds(
+                        time.monotonic() - progress_started,
+                        completed_segments,
+                        len(starts),
+                    ),
+                )
 
         return target_output, remainder_output

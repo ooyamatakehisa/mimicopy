@@ -467,6 +467,7 @@ describe("App", () => {
           createdAt: baseTimestamp,
           error: null,
           mediaUrl: "/media/track-1-guitar.mp3",
+          progress: null,
           remainderMediaUrl: "/media/track-1-guitar-remainder.mp3",
           status: "completed",
           targetStem: "guitar",
@@ -516,6 +517,45 @@ describe("App", () => {
       expect(audios[0]?.volume).toBeCloseTo(0.35);
       expect(audios[2]?.volume).toBe(0);
     });
+  });
+
+  it("shows stem separation percentage and estimated remaining time", async () => {
+    tracks = [
+      createTrack({
+        separation: {
+          createdAt: baseTimestamp,
+          error: null,
+          mediaUrl: null,
+          progress: {
+            completedSegments: 2,
+            estimatedRemainingSeconds: 18.5,
+            percentage: 40,
+            totalSegments: 5
+          },
+          remainderMediaUrl: null,
+          status: "running",
+          targetStem: "guitar",
+          updatedAt: baseTimestamp
+        },
+        sourceType: "youtube"
+      })
+    ];
+    window.history.replaceState(null, "", "/tracks/track-1");
+    render(<App />);
+
+    await waitFor(() => {
+      expectTrackEditorLoaded("phrase.mp3");
+    });
+
+    const progress = screen.getByLabelText("音源分離の進捗");
+
+    expect(within(progress).getByText("ギターを分離中 40%")).toBeVisible();
+    expect(within(progress).getByText(/2 \/ 5 セグメント完了/)).toBeVisible();
+    expect(within(progress).getByText("残り約19秒")).toBeVisible();
+    expect(within(progress).getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "40"
+    );
   });
 
   it("uses the automatically analyzed track audio for the click track", async () => {

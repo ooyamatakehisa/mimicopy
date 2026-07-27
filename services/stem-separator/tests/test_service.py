@@ -4,11 +4,12 @@ from unittest import TestCase
 
 import numpy as np
 
-from app.main import resolve_media_file
+from app.main import SeparationProgressStore, resolve_media_file
 from app.separator import (
     CHUNK_SAMPLES,
     SILENCE_RMS_THRESHOLD,
     STEM_NAMES,
+    estimate_remaining_seconds,
     is_effectively_silent,
     select_target_and_remainder_spectra,
     segment_starts,
@@ -51,6 +52,30 @@ class ServiceHelpersTest(TestCase):
 
         self.assertTrue(is_effectively_silent(silent))
         self.assertFalse(is_effectively_silent(audible))
+
+    def test_estimates_remaining_time_from_completed_segments(self) -> None:
+        self.assertEqual(
+            estimate_remaining_seconds(12.0, 3, 8),
+            20.0,
+        )
+        self.assertEqual(
+            estimate_remaining_seconds(12.0, 8, 8),
+            0.0,
+        )
+        self.assertIsNone(estimate_remaining_seconds(0.0, 0, 8))
+
+    def test_tracks_progress_for_the_active_separation(self) -> None:
+        progress_store = SeparationProgressStore()
+        progress_store.begin("track-guitar.mp3")
+        progress_store.update("track-guitar.mp3", 2, 5, 18.5)
+
+        progress = progress_store.get("track-guitar.mp3")
+
+        self.assertIsNotNone(progress)
+        assert progress is not None
+        self.assertEqual(progress.completed_segments, 2)
+        self.assertEqual(progress.total_segments, 5)
+        self.assertEqual(progress.estimated_remaining_seconds, 18.5)
 
     def test_sums_every_non_target_model_output(self) -> None:
         real = np.arange(len(STEM_NAMES), dtype=np.float32).reshape(

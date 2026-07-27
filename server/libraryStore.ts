@@ -33,10 +33,18 @@ export type LibrarySeparationStatus =
   | "completed"
   | "failed";
 
+export type LibrarySeparationProgress = {
+  completedSegments: number;
+  estimatedRemainingSeconds: number | null;
+  percentage: number;
+  totalSegments: number;
+};
+
 export type LibrarySeparation = {
   createdAt: string;
   error: string | null;
   mediaUrl: string | null;
+  progress: LibrarySeparationProgress | null;
   remainderMediaUrl: string | null;
   status: LibrarySeparationStatus;
   targetStem: StemName;
@@ -211,6 +219,19 @@ function rowToSeparation(row: Record<string, unknown>): LibrarySeparation {
       ? row.remainder_media_filename
       : null;
   const error = typeof row.error === "string" ? row.error : null;
+  const totalSegments = Math.max(
+    0,
+    Math.floor(toFiniteNumber(row.total_segments))
+  );
+  const completedSegments = Math.min(
+    totalSegments,
+    Math.max(0, Math.floor(toFiniteNumber(row.completed_segments)))
+  );
+  const estimatedRemainingSeconds =
+    row.estimated_remaining_seconds === null ||
+    row.estimated_remaining_seconds === undefined
+      ? null
+      : Math.max(0, toFiniteNumber(row.estimated_remaining_seconds));
 
   if (!isStemName(targetStem)) {
     throw new Error(`Invalid separation stem: ${targetStem}`);
@@ -222,6 +243,17 @@ function rowToSeparation(row: Record<string, unknown>): LibrarySeparation {
     mediaUrl:
       status === "completed" && mediaFilename
         ? toMediaUrl(mediaFilename)
+        : null,
+    progress:
+      totalSegments > 0
+        ? {
+            completedSegments,
+            estimatedRemainingSeconds,
+            percentage: Math.round(
+              (completedSegments / totalSegments) * 100
+            ),
+            totalSegments
+          }
         : null,
     remainderMediaUrl:
       status === "completed" && remainderMediaFilename
@@ -274,6 +306,9 @@ function createSchema(database: DatabaseSync) {
       status TEXT NOT NULL,
       media_filename TEXT NOT NULL UNIQUE,
       remainder_media_filename TEXT UNIQUE,
+      completed_segments INTEGER NOT NULL DEFAULT 0,
+      total_segments INTEGER NOT NULL DEFAULT 0,
+      estimated_remaining_seconds REAL,
       error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -283,13 +318,27 @@ function createSchema(database: DatabaseSync) {
   const separationColumns = database
     .prepare("PRAGMA table_info(track_separations)")
     .all();
-  const hasRemainderMediaFilename = separationColumns.some(
-    (column) => column.name === "remainder_media_filename"
-  );
+  const hasSeparationColumn = (name: string) =>
+    separationColumns.some((column) => column.name === name);
 
-  if (!hasRemainderMediaFilename) {
+  if (!hasSeparationColumn("remainder_media_filename")) {
     database.exec(
       "ALTER TABLE track_separations ADD COLUMN remainder_media_filename TEXT"
+    );
+  }
+  if (!hasSeparationColumn("completed_segments")) {
+    database.exec(
+      "ALTER TABLE track_separations ADD COLUMN completed_segments INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+  if (!hasSeparationColumn("total_segments")) {
+    database.exec(
+      "ALTER TABLE track_separations ADD COLUMN total_segments INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+  if (!hasSeparationColumn("estimated_remaining_seconds")) {
+    database.exec(
+      "ALTER TABLE track_separations ADD COLUMN estimated_remaining_seconds REAL"
     );
   }
 
@@ -392,6 +441,9 @@ export class LibraryStore {
             status,
             media_filename,
             remainder_media_filename,
+            completed_segments,
+            total_segments,
+            estimated_remaining_seconds,
             error,
             created_at,
             updated_at
@@ -444,6 +496,9 @@ export class LibraryStore {
         SET
           remainder_media_filename = ?,
           status = 'queued',
+          completed_segments = 0,
+          total_segments = 0,
+          estimated_remaining_seconds = NULL,
           error = NULL,
           updated_at = ?
         WHERE track_id = ?
@@ -746,11 +801,84 @@ export class LibraryStore {
       .prepare(
         `
           UPDATE track_separations
-          SET status = ?, error = ?, updated_at = ?
+          SET
+            status = ?,
+            completed_segments = CASE
+              WHEN ? = 'running' THEN 0
+              WHEN ? = 'completed' AND total_segments > 0
+                THEN total_segments
+              ELSE completed_segments
+            END,
+            total_segments = CASE
+              WHEN ? = 'running' THEN 0
+              ELSE total_segments
+            END,
+            estimated_remaining_seconds = CASE
+              WHEN ? = 'running' THEN NULL
+              WHEN ? = 'completed' AND total_segments > 0 THEN 0
+              ELSE estimated_remaining_seconds
+            END,
+            error = ?,
+            updated_at = ?
           WHERE track_id = ?
         `
       )
-      .run(status, error ?? null, now, trackId);
+      .run(
+        status,
+        status,
+        status,
+        status,
+        status,
+        status,
+        error ?? null,
+        now,
+        trackId
+      );
+
+    return this.getTrack(trackId);
+  }
+
+  updateSeparationProgress({
+    completedSegments,
+    estimatedRemainingSeconds,
+    totalSegments,
+    trackId
+  }: {
+    completedSegments: number;
+    estimatedRemainingSeconds: number | null;
+    totalSegments: number;
+    trackId: string;
+  }) {
+    const normalizedTotal = Math.max(1, Math.floor(totalSegments));
+    const normalizedCompleted = Math.min(
+      normalizedTotal,
+      Math.max(0, Math.floor(completedSegments))
+    );
+    const normalizedRemaining =
+      estimatedRemainingSeconds === null
+        ? null
+        : Math.max(0, estimatedRemainingSeconds);
+    const now = new Date().toISOString();
+
+    this.#database
+      .prepare(
+        `
+          UPDATE track_separations
+          SET
+            completed_segments = ?,
+            total_segments = ?,
+            estimated_remaining_seconds = ?,
+            updated_at = ?
+          WHERE track_id = ? AND status = 'running'
+        `
+      )
+      .run(
+        normalizedCompleted,
+        normalizedTotal,
+        normalizedRemaining,
+        now,
+        trackId
+      );
 
     return this.getTrack(trackId);
   }

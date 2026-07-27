@@ -129,6 +129,7 @@ async function mockYoutubeConversion(page: Page) {
       createdAt: now,
       error: null,
       mediaUrl: "/media/e2e-youtube-guitar.mp3",
+      progress: null,
       remainderMediaUrl:
         "/media/e2e-youtube-guitar-remainder.mp3",
       status: "completed",
@@ -558,6 +559,73 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();
   await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+});
+
+test("shows stem separation progress and remaining time", async ({ page }) => {
+  const now = new Date().toISOString();
+  const track = {
+    createdAt: now,
+    duration: 3,
+    id: "e2e-progress-track",
+    markerCount: 0,
+    markers: [],
+    mediaUrl: "/media/e2e-progress.mp3",
+    separation: {
+      createdAt: now,
+      error: null,
+      mediaUrl: null,
+      progress: {
+        completedSegments: 2,
+        estimatedRemainingSeconds: 18.5,
+        percentage: 40,
+        totalSegments: 5
+      },
+      remainderMediaUrl: null,
+      status: "running",
+      targetStem: "guitar",
+      updatedAt: now
+    },
+    sourceType: "youtube",
+    title: "Progress Track",
+    updatedAt: now
+  };
+
+  await page.route("**/api/tracks/e2e-progress-track", async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ track }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+  await page.route(
+    "**/api/tracks/e2e-progress-track/beat-grid",
+    async (route) => {
+      await route.fulfill({
+        body: JSON.stringify(createCompletedBeatAnalysis()),
+        contentType: "application/json",
+        status: 200
+      });
+    }
+  );
+  await page.route("**/media/e2e-progress.mp3", async (route) => {
+    await route.fulfill({
+      body: createToneWavBuffer(),
+      contentType: "audio/mpeg",
+      status: 200
+    });
+  });
+
+  await page.goto("/tracks/e2e-progress-track");
+
+  const progress = page.getByLabel("音源分離の進捗");
+
+  await expect(progress).toContainText("ギターを分離中 40%");
+  await expect(progress).toContainText("2 / 5 セグメント完了");
+  await expect(progress).toContainText("残り約19秒");
+  await expect(progress.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "40"
+  );
 });
 
 test("converts a real playlist-backed YouTube URL", async ({ page }) => {

@@ -1,6 +1,7 @@
 import { sortMarkers, type Marker } from "./markers";
 import {
   isStemName,
+  type SeparationProgress,
   type SeparationStatus,
   type TrackSeparation
 } from "./separation";
@@ -63,6 +64,40 @@ function isSeparationStatus(value: string): value is SeparationStatus {
   );
 }
 
+function parseSeparationProgress(value: unknown): SeparationProgress | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const completedSegments = readNumber(value, "completedSegments");
+  const estimatedRemainingSecondsValue =
+    value.estimatedRemainingSeconds;
+  const totalSegments = readNumber(value, "totalSegments");
+
+  if (
+    completedSegments === null ||
+    !Number.isInteger(completedSegments) ||
+    completedSegments < 0 ||
+    totalSegments === null ||
+    !Number.isInteger(totalSegments) ||
+    totalSegments <= 0 ||
+    completedSegments > totalSegments ||
+    (estimatedRemainingSecondsValue !== null &&
+      (typeof estimatedRemainingSecondsValue !== "number" ||
+        !Number.isFinite(estimatedRemainingSecondsValue) ||
+        estimatedRemainingSecondsValue < 0))
+  ) {
+    return null;
+  }
+
+  return {
+    completedSegments,
+    estimatedRemainingSeconds: estimatedRemainingSecondsValue,
+    percentage: Math.round((completedSegments / totalSegments) * 100),
+    totalSegments
+  };
+}
+
 function parseTrackSeparation(value: unknown): TrackSeparation | null {
   if (!isRecord(value)) {
     return null;
@@ -71,6 +106,10 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
   const createdAt = readString(value, "createdAt");
   const errorValue = value.error;
   const mediaUrlValue = value.mediaUrl;
+  const progress =
+    value.progress === null || value.progress === undefined
+      ? null
+      : parseSeparationProgress(value.progress);
   const remainderMediaUrlValue = value.remainderMediaUrl;
   const status = readString(value, "status");
   const targetStem = readString(value, "targetStem");
@@ -80,6 +119,9 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
     !createdAt ||
     (errorValue !== null && typeof errorValue !== "string") ||
     (mediaUrlValue !== null && typeof mediaUrlValue !== "string") ||
+    (value.progress !== null &&
+      value.progress !== undefined &&
+      !progress) ||
     (remainderMediaUrlValue !== null &&
       typeof remainderMediaUrlValue !== "string") ||
     !status ||
@@ -95,6 +137,7 @@ function parseTrackSeparation(value: unknown): TrackSeparation | null {
     createdAt,
     error: errorValue,
     mediaUrl: mediaUrlValue,
+    progress,
     remainderMediaUrl: remainderMediaUrlValue,
     status,
     targetStem,

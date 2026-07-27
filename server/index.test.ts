@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp, getYoutubeVideoId, youtubeDownloadPlans } from "./index.js";
+import type { SeparateAudioInput } from "./stemSeparation.js";
 
 const tempDirs: string[] = [];
 
@@ -276,12 +277,7 @@ describe("YouTube stem separation API", () => {
     const separationGate = new Promise<void>((resolve) => {
       finishSeparation = resolve;
     });
-    const separationCalls: Array<{
-      inputFilename: string;
-      outputFilename: string;
-      remainderOutputFilename: string;
-      targetStem: string;
-    }> = [];
+    const separationCalls: SeparateAudioInput[] = [];
     const app = createApp({
       analyzeBeats: async () => ({
         analyzedAt: "2026-07-20T00:00:00.000Z",
@@ -297,6 +293,11 @@ describe("YouTube stem separation API", () => {
       },
       separateAudio: async (input) => {
         separationCalls.push(input);
+        input.onProgress?.({
+          completedSegments: 2,
+          estimatedRemainingSeconds: 18.5,
+          totalSegments: 5
+        });
         await separationGate;
         await writeFile(
           path.join(storageDir, "media", input.outputFilename),
@@ -366,9 +367,25 @@ describe("YouTube stem separation API", () => {
       const runningTrack = await fetch(
         `${baseUrl}/api/tracks/${body.track.id}`
       ).then((trackResponse) => trackResponse.json()) as {
-        track: { separation: { status: string } };
+        track: {
+          separation: {
+            progress: {
+              completedSegments: number;
+              estimatedRemainingSeconds: number | null;
+              percentage: number;
+              totalSegments: number;
+            };
+            status: string;
+          };
+        };
       };
       expect(runningTrack.track.separation.status).toBe("running");
+      expect(runningTrack.track.separation.progress).toEqual({
+        completedSegments: 2,
+        estimatedRemainingSeconds: 18.5,
+        percentage: 40,
+        totalSegments: 5
+      });
 
       finishSeparation?.();
 
@@ -379,6 +396,11 @@ describe("YouTube stem separation API", () => {
           track: {
             separation: {
               mediaUrl: string | null;
+              progress: {
+                completedSegments: number;
+                percentage: number;
+                totalSegments: number;
+              };
               remainderMediaUrl: string | null;
               status: string;
             };
@@ -392,6 +414,11 @@ describe("YouTube stem separation API", () => {
         expect(
           completedTrack.track.separation.remainderMediaUrl
         ).toMatch(/^\/media\/.+-guitar-remainder\.mp3$/);
+        expect(completedTrack.track.separation.progress).toMatchObject({
+          completedSegments: 5,
+          percentage: 100,
+          totalSegments: 5
+        });
       });
     } finally {
       finishSeparation?.();

@@ -87,9 +87,11 @@ When importing a YouTube URL, choose either `音源分離なし` or one target:
 - ピアノ
 
 The original MP3 becomes available first. If a stem was requested, the track
-page polls the background job until both separated MP3s are ready. The mixer
-then plays the original, requested stem, and the sum of every other stem
-together with independent volume, mute, and solo controls.
+page polls the background job until both separated MP3s are ready. While the
+job is running, it shows completed and total audio segments, percentage, and
+an estimated remaining time. The mixer then plays the original, requested
+stem, and the sum of every other stem together with independent volume, mute,
+and solo controls.
 
 The TypeScript API only queues the requested outputs and stores their status.
 All model loading, STFT/iSTFT, OpenVINO inference, and MP3 encoding live in the

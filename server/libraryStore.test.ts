@@ -116,6 +116,7 @@ describe("LibraryStore", () => {
 
     expect(queuedTrack?.separation).toMatchObject({
       mediaUrl: null,
+      progress: null,
       remainderMediaUrl: null,
       status: "queued",
       targetStem: "guitar"
@@ -130,6 +131,24 @@ describe("LibraryStore", () => {
       }
     ]);
 
+    store.updateSeparationStatus({
+      status: "running",
+      trackId: track.id
+    });
+    const runningTrack = store.updateSeparationProgress({
+      completedSegments: 2,
+      estimatedRemainingSeconds: 18.5,
+      totalSegments: 5,
+      trackId: track.id
+    });
+
+    expect(runningTrack?.separation?.progress).toEqual({
+      completedSegments: 2,
+      estimatedRemainingSeconds: 18.5,
+      percentage: 40,
+      totalSegments: 5
+    });
+
     const completedTrack = store.updateSeparationStatus({
       status: "completed",
       trackId: track.id
@@ -137,6 +156,12 @@ describe("LibraryStore", () => {
 
     expect(completedTrack?.separation).toMatchObject({
       mediaUrl: "/media/phrase-guitar.mp3",
+      progress: {
+        completedSegments: 5,
+        estimatedRemainingSeconds: 0,
+        percentage: 100,
+        totalSegments: 5
+      },
       remainderMediaUrl: "/media/phrase-guitar-remainder.mp3",
       status: "completed",
       targetStem: "guitar"
@@ -147,6 +172,12 @@ describe("LibraryStore", () => {
 
     expect(reopenedStore.getTrack(track.id)?.separation).toMatchObject({
       mediaUrl: "/media/phrase-guitar.mp3",
+      progress: {
+        completedSegments: 5,
+        estimatedRemainingSeconds: 0,
+        percentage: 100,
+        totalSegments: 5
+      },
       remainderMediaUrl: "/media/phrase-guitar-remainder.mp3",
       status: "completed",
       targetStem: "guitar"

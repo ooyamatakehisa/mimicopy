@@ -566,6 +566,14 @@ export function createApp(options: CreateAppOptions = {}) {
       try {
         await separateAudio({
           inputFilename,
+          onProgress: (progress) => {
+            if (store.getMediaFilename(trackId)) {
+              store.updateSeparationProgress({
+                ...progress,
+                trackId
+              });
+            }
+          },
           outputFilename,
           remainderOutputFilename,
           targetStem
