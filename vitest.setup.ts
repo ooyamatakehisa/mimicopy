@@ -64,6 +64,13 @@ class AudioContextMock {
       value: 1
     }
   }));
+  createBufferSource = vi.fn(() => ({
+    buffer: null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn()
+  }));
   createOscillator = vi.fn(() => ({
     connect: vi.fn(),
     frequency: { value: 0 },

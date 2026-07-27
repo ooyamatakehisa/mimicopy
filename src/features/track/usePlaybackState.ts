@@ -10,7 +10,6 @@ import {
   createAudioPlaybackGraph,
   destroyAudioPlaybackGraph,
   restartAudioPlaybackGraph,
-  setAudioPlaybackGraphSemitones,
   setAudioPlaybackGraphVolumes,
   stopAudioPlaybackGraph,
   type AudioPlaybackGraph,
@@ -343,12 +342,14 @@ export function usePlaybackState({
   ]);
 
   useEffect(() => {
-    const graph = graphRef.current;
-
-    if (graph) {
-      setAudioPlaybackGraphSemitones(graph, semitones);
+    if (isPlayingRef.current) {
+      restartPlayingSources(getCurrentTime());
     }
-  }, [semitones]);
+  }, [
+    getCurrentTime,
+    restartPlayingSources,
+    semitones
+  ]);
 
   useEffect(() => {
     if (!isPlaying) {

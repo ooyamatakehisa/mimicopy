@@ -12,22 +12,31 @@ import type { MixerChannelId } from "./mixer";
 import type { PlaybackRate } from "./playback";
 
 const playbackStartLeadSeconds = 0.03;
+const granularLookAheadSeconds = 0.1;
 
 export type PlaybackAudioBuffers = Record<
   MixerChannelId,
   AudioBuffer | null
 >;
 
+export type AudioPlaybackMode = "granular" | "native";
+
 type AudioEnvironment = {
   GrainPlayerClass: typeof GrainPlayer;
   toneContext: Context;
+};
+
+type AudioPlaybackPlayer = {
+  dispose: () => void;
+  start: (contextTime: number, mediaTime: number) => void;
+  stop: (contextTime: number) => void;
 };
 
 export type AudioPlaybackGraph = {
   audioContext: AudioContext;
   environment: AudioEnvironment;
   gains: MixerGainNodes;
-  players: GrainPlayer[];
+  players: AudioPlaybackPlayer[];
 };
 
 let audioEnvironmentPromise: Promise<AudioEnvironment> | null = null;
@@ -43,7 +52,7 @@ async function getAudioEnvironment(audioContext: AudioContext) {
         toneContext: new ToneContext({
           context: audioContext,
           latencyHint: "interactive",
-          lookAhead: 0
+          lookAhead: granularLookAheadSeconds
         })
       }))
       .catch((error: unknown) => {
@@ -103,13 +112,76 @@ export function setAudioPlaybackGraphVolumes(
   });
 }
 
-export function setAudioPlaybackGraphSemitones(
-  graph: AudioPlaybackGraph,
-  semitones: number
-) {
-  for (const player of graph.players) {
-    player.detune = semitones * 100;
-  }
+export function getAudioPlaybackMode({
+  playbackRate,
+  semitones
+}: {
+  playbackRate: PlaybackRate;
+  semitones: number;
+}): AudioPlaybackMode {
+  return playbackRate === 1 && semitones === 0
+    ? "native"
+    : "granular";
+}
+
+function createNativeAudioPlayer({
+  audioBuffer,
+  channelId,
+  graph
+}: {
+  audioBuffer: AudioBuffer;
+  channelId: MixerChannelId;
+  graph: AudioPlaybackGraph;
+}): AudioPlaybackPlayer {
+  const source = graph.audioContext.createBufferSource();
+
+  source.buffer = audioBuffer;
+  source.connect(graph.gains[channelId]);
+
+  return {
+    dispose: () => source.disconnect(),
+    start: (contextTime, mediaTime) => {
+      source.start(contextTime, mediaTime);
+    },
+    stop: (contextTime) => {
+      source.stop(contextTime);
+    }
+  };
+}
+
+function createGranularAudioPlayer({
+  audioBuffer,
+  channelId,
+  graph,
+  playbackRate,
+  semitones
+}: {
+  audioBuffer: AudioBuffer;
+  channelId: MixerChannelId;
+  graph: AudioPlaybackGraph;
+  playbackRate: PlaybackRate;
+  semitones: number;
+}): AudioPlaybackPlayer {
+  const player = new graph.environment.GrainPlayerClass({
+    context: graph.environment.toneContext,
+    detune: semitones * 100,
+    grainSize: 0.1,
+    overlap: 0.05,
+    playbackRate,
+    url: audioBuffer
+  });
+
+  player.connect(graph.gains[channelId]);
+
+  return {
+    dispose: () => player.dispose(),
+    start: (contextTime, mediaTime) => {
+      player.start(contextTime, mediaTime);
+    },
+    stop: (contextTime) => {
+      player.stop(contextTime);
+    }
+  };
 }
 
 export function restartAudioPlaybackGraph({
@@ -127,6 +199,10 @@ export function restartAudioPlaybackGraph({
 }) {
   stopAudioPlaybackGraph(graph);
 
+  const playbackMode = getAudioPlaybackMode({
+    playbackRate,
+    semitones
+  });
   const nextPlayers = (
     Object.entries(audioBuffers) as Array<
       [MixerChannelId, AudioBuffer | null]
@@ -136,18 +212,21 @@ export function restartAudioPlaybackGraph({
       return [];
     }
 
-    const player = new graph.environment.GrainPlayerClass({
-      context: graph.environment.toneContext,
-      detune: semitones * 100,
-      grainSize: 0.1,
-      overlap: 0.05,
-      playbackRate,
-      url: audioBuffer
-    });
-
-    player.connect(graph.gains[channelId]);
-
-    return [player];
+    return [
+      playbackMode === "native"
+        ? createNativeAudioPlayer({
+            audioBuffer,
+            channelId,
+            graph
+          })
+        : createGranularAudioPlayer({
+            audioBuffer,
+            channelId,
+            graph,
+            playbackRate,
+            semitones
+          })
+    ];
   });
   const contextTime =
     graph.audioContext.currentTime + playbackStartLeadSeconds;
