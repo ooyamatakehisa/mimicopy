@@ -493,6 +493,20 @@ describe("App", () => {
     expect(
       within(mixer).getByLabelText("ギター以外 channel")
     ).toBeVisible();
+    expect(
+      within(mixer).getByRole("link", { name: "原音をダウンロード" })
+    ).toHaveAttribute("download", "phrase.mp3");
+    expect(
+      within(mixer).getByRole("link", { name: "原音をダウンロード" })
+    ).toHaveAttribute("href", "/media/track-1.mp3");
+    expect(
+      within(mixer).getByRole("link", { name: "ギターをダウンロード" })
+    ).toHaveAttribute("download", "phrase-guitar.mp3");
+    expect(
+      within(mixer).getByRole("link", {
+        name: "ギター以外をダウンロード"
+      })
+    ).toHaveAttribute("download", "phrase-guitar-remainder.mp3");
 
     fireEvent.change(originalVolume, { target: { value: "35" } });
     await waitFor(() => {
@@ -548,6 +562,7 @@ describe("App", () => {
     });
 
     const progress = screen.getByLabelText("音源分離の進捗");
+    const mixer = screen.getByLabelText("Audio mixer");
 
     expect(within(progress).getByText("ギターを分離中 40%")).toBeVisible();
     expect(within(progress).getByText(/2 \/ 5 セグメント完了/)).toBeVisible();
@@ -556,6 +571,19 @@ describe("App", () => {
       "aria-valuenow",
       "40"
     );
+    expect(
+      within(mixer).getByRole("link", { name: "原音をダウンロード" })
+    ).toBeVisible();
+    expect(
+      within(mixer).getByRole("button", {
+        name: "ギターは分離完了後にダウンロードできます"
+      })
+    ).toBeDisabled();
+    expect(
+      within(mixer).getByRole("button", {
+        name: "ギター以外は分離完了後にダウンロードできます"
+      })
+    ).toBeDisabled();
   });
 
   it("uses the automatically analyzed track audio for the click track", async () => {

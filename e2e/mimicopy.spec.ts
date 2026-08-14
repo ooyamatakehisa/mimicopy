@@ -445,6 +445,23 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect(mixer.getByLabel("原音 channel")).toBeVisible();
   await expect(mixer.getByLabel("ギター channel")).toBeVisible();
   await expect(mixer.getByLabel("ギター以外 channel")).toBeVisible();
+  await expect(
+    mixer.getByRole("link", { name: "原音をダウンロード" })
+  ).toHaveAttribute("download", "Mock YouTube Track.mp3");
+  await expect(
+    mixer.getByRole("link", { name: "ギターをダウンロード" })
+  ).toHaveAttribute("download", "Mock YouTube Track-guitar.mp3");
+  await expect(
+    mixer.getByRole("link", { name: "ギター以外をダウンロード" })
+  ).toHaveAttribute(
+    "download",
+    "Mock YouTube Track-guitar-remainder.mp3"
+  );
+  const downloadPromise = page.waitForEvent("download");
+  await mixer.getByRole("link", { name: "ギターをダウンロード" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe("Mock YouTube Track-guitar.mp3");
   await mixer.getByLabel("原音の音量").fill("40");
   await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
   await mixer.getByTitle("原音をミュート").click();

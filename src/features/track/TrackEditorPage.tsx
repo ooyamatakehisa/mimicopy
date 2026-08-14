@@ -334,7 +334,12 @@ function TrackEditor({
           )}
         >
           {track.separation ? (
-            <StemMixer mixer={mixer} separation={track.separation} />
+            <StemMixer
+              mixer={mixer}
+              originalMediaUrl={track.mediaUrl}
+              separation={track.separation}
+              trackTitle={track.title}
+            />
           ) : null}
           <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(320px,390px)] items-stretch gap-4 p-4 max-lg:contents">
             <WaveformPanel

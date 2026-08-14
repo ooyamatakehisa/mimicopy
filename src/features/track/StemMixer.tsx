@@ -1,5 +1,12 @@
-import { AudioLines, LoaderCircle, Volume2, VolumeX } from "lucide-react";
-import { Button } from "../../components/ui/Button";
+import {
+  AudioLines,
+  Download,
+  LoaderCircle,
+  Volume2,
+  VolumeX
+} from "lucide-react";
+import { Button, buttonVariants } from "../../components/ui/Button";
+import { getTrackAudioDownloadFilename } from "../../lib/audioDownload";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { cn } from "../../lib/cn";
 import type { MixerChannelId } from "../../lib/mixer";
@@ -12,10 +19,17 @@ import type { StemMixerState } from "./useStemMixer";
 
 type StemMixerProps = {
   mixer: StemMixerState;
+  originalMediaUrl: string;
   separation: TrackSeparation;
+  trackTitle: string;
 };
 
-export function StemMixer({ mixer, separation }: StemMixerProps) {
+export function StemMixer({
+  mixer,
+  originalMediaUrl,
+  separation,
+  trackTitle
+}: StemMixerProps) {
   const stemReady =
     separation.status === "completed" && Boolean(separation.mediaUrl);
   const remainderReady =
@@ -37,18 +51,50 @@ export function StemMixer({ mixer, separation }: StemMixerProps) {
       <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
         <MixerChannel
           channelId="original"
+          download={{
+            filename: getTrackAudioDownloadFilename(
+              trackTitle,
+              "original",
+              separation.targetStem
+            ),
+            mediaUrl: originalMediaUrl
+          }}
           disabled={false}
           label="原音"
           mixer={mixer}
         />
         <MixerChannel
           channelId="stem"
+          download={
+            stemReady && separation.mediaUrl
+              ? {
+                  filename: getTrackAudioDownloadFilename(
+                    trackTitle,
+                    "stem",
+                    separation.targetStem
+                  ),
+                  mediaUrl: separation.mediaUrl
+                }
+              : null
+          }
           disabled={!stemReady}
           label={stemLabels[separation.targetStem]}
           mixer={mixer}
         />
         <MixerChannel
           channelId="remainder"
+          download={
+            remainderReady && separation.remainderMediaUrl
+              ? {
+                  filename: getTrackAudioDownloadFilename(
+                    trackTitle,
+                    "remainder",
+                    separation.targetStem
+                  ),
+                  mediaUrl: separation.remainderMediaUrl
+                }
+              : null
+          }
           disabled={!remainderReady}
           label={`${stemLabels[separation.targetStem]}以外`}
           mixer={mixer}
@@ -131,11 +177,13 @@ function SeparationStatus({
 function MixerChannel({
   channelId,
   disabled,
+  download,
   label,
   mixer
 }: {
   channelId: MixerChannelId;
   disabled: boolean;
+  download: { filename: string; mediaUrl: string } | null;
   label: string;
   mixer: StemMixerState;
 }) {
@@ -145,7 +193,7 @@ function MixerChannel({
   return (
     <div
       className={cn(
-        "grid min-w-0 grid-cols-[minmax(80px,1fr)_auto_auto_minmax(100px,1.4fr)] items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.045] p-2 max-sm:grid-cols-[minmax(80px,1fr)_auto_auto]",
+        "grid min-w-0 grid-cols-[minmax(80px,1fr)_auto_auto_auto_minmax(100px,1.4fr)] items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.045] p-2 max-sm:grid-cols-[minmax(80px,1fr)_auto_auto_auto]",
         disabled && "opacity-50"
       )}
       aria-label={`${label} channel`}
@@ -153,6 +201,27 @@ function MixerChannel({
       <strong className="min-w-0 truncate px-1 text-sm text-ink">
         {label}
       </strong>
+      {download ? (
+        <a
+          aria-label={`${label}をダウンロード`}
+          className={cn(buttonVariants({ size: "sm" }), "size-9 px-0")}
+          download={download.filename}
+          href={download.mediaUrl}
+          title={`${label}をダウンロード`}
+        >
+          <Download aria-hidden="true" size={15} />
+        </a>
+      ) : (
+        <Button
+          aria-label={`${label}は分離完了後にダウンロードできます`}
+          className="size-9 px-0"
+          disabled
+          size="sm"
+          title={`${label}は分離完了後にダウンロードできます`}
+        >
+          <Download aria-hidden="true" size={15} />
+        </Button>
+      )}
       <Button
         aria-pressed={channel.muted}
         className="min-w-16"
@@ -176,7 +245,7 @@ function MixerChannel({
       >
         S
       </Button>
-      <label className="flex min-w-0 items-center gap-2 text-xs text-muted max-sm:col-span-3">
+      <label className="flex min-w-0 items-center gap-2 text-xs text-muted max-sm:col-span-4">
         <span className="sr-only">{label}の音量</span>
         <input
           aria-label={`${label}の音量`}
