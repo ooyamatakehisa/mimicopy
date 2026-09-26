@@ -632,7 +632,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
 
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();
-  await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+  await expect(library.getByText("最初の1曲を読み込もう")).toBeVisible();
 });
 
 test("shows stem separation progress and remaining time", async ({ page }) => {
@@ -745,5 +745,5 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
 
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();
-  await expect(library.getByText("保存済みMP3はまだありません")).toBeVisible();
+  await expect(library.getByText("最初の1曲を読み込もう")).toBeVisible();
 });

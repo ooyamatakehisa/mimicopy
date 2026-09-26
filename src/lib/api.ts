@@ -21,7 +21,7 @@ export function beatGridQueryKey(trackId: string) {
   return ["track", trackId, "beat-grid"] as const;
 }
 
-async function parseJsonResponse(response: Response, fallback: string) {
+export async function parseJsonResponse(response: Response, fallback: string) {
   const body = (await response.json().catch(() => null)) as unknown;
 
   if (!response.ok) {

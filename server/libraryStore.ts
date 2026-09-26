@@ -17,6 +17,7 @@ export type LibraryMarker = {
 };
 
 export type LibraryTrackSummary = {
+  folderId: string | null;
   id: string;
   title: string;
   sourceType: LibrarySourceType;
@@ -142,6 +143,7 @@ function rowToTrackSummary(row: Record<string, unknown>): LibraryTrackSummary {
   const mediaFilename = requireString(row, "media_filename");
 
   return {
+    folderId: typeof row.folder_id === "string" ? row.folder_id : null,
     createdAt: requireString(row, "created_at"),
     duration: toFiniteNumber(row.duration),
     id: requireString(row, "id"),
@@ -269,6 +271,12 @@ function createSchema(database: DatabaseSync) {
   database.exec(`
     PRAGMA foreign_keys = ON;
 
+    CREATE TABLE IF NOT EXISTS folders (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS tracks (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -315,6 +323,12 @@ function createSchema(database: DatabaseSync) {
     );
   `);
 
+  const trackColumns = database.prepare("PRAGMA table_info(tracks)").all();
+  if (!trackColumns.some((column) => column.name === "folder_id")) {
+    database.exec("ALTER TABLE tracks ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL");
+  }
+  database.exec("CREATE INDEX IF NOT EXISTS tracks_folder_index ON tracks(folder_id)");
+
   const separationColumns = database
     .prepare("PRAGMA table_info(track_separations)")
     .all();
@@ -350,6 +364,12 @@ function createSchema(database: DatabaseSync) {
   `);
 }
 
+export class LibraryFolderError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 export class LibraryStore {
   readonly mediaDir: string;
 
@@ -368,12 +388,66 @@ export class LibraryStore {
     this.#database.close();
   }
 
+  listFolders() {
+    return this.#database.prepare("SELECT id, name FROM folders ORDER BY name COLLATE NOCASE, id").all().map((row) => ({
+      id: requireString(row, "id"),
+      name: requireString(row, "name")
+    }));
+  }
+
+  saveFolder(name: string, folderId?: string) {
+    const normalized = name.trim();
+    if (!normalized || normalized.length > 80 || Array.from(normalized).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+      throw new LibraryFolderError(400, "フォルダ名は1〜80文字で入力してください。");
+    }
+    if (folderId && !this.#database.prepare("SELECT id FROM folders WHERE id = ?").get(folderId)) {
+      throw new LibraryFolderError(404, "フォルダが見つかりません。一覧を更新してください。");
+    }
+    const id = folderId ?? randomUUID();
+    if (this.#database.prepare("SELECT id FROM folders WHERE name = ? AND id != ?").get(normalized, id)) {
+      throw new LibraryFolderError(409, "同じ名前のフォルダがあります。別の名前を入力してください。");
+    }
+    if (folderId) {
+      this.#database.prepare("UPDATE folders SET name = ? WHERE id = ?").run(normalized, id);
+    } else {
+      this.#database.prepare("INSERT INTO folders (id, name, created_at) VALUES (?, ?, ?)").run(id, normalized, new Date().toISOString());
+    }
+    return { id, name: normalized };
+  }
+
+  deleteFolder(folderId: string) {
+    const result = this.#database.prepare("DELETE FROM folders WHERE id = ?").run(folderId);
+    if (result.changes === 0) {
+      throw new LibraryFolderError(404, "フォルダが見つかりません。一覧を更新してください。");
+    }
+  }
+
+  moveTracks(trackIds: string[], folderId: string | null) {
+    if (folderId !== null && !this.#database.prepare("SELECT id FROM folders WHERE id = ?").get(folderId)) {
+      throw new LibraryFolderError(404, "移動先のフォルダが見つかりません。一覧を更新してください。");
+    }
+    const update = this.#database.prepare("UPDATE tracks SET folder_id = ? WHERE id = ?");
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const trackId of trackIds) {
+        if (update.run(folderId, trackId).changes === 0) {
+          throw new LibraryFolderError(404, "曲が見つかりません。一覧を更新してください。");
+        }
+      }
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   listTracks() {
     const rows = this.#database
       .prepare(
         `
           SELECT
             tracks.id,
+            tracks.folder_id,
             tracks.title,
             tracks.source_type,
             tracks.media_filename,
@@ -398,6 +472,7 @@ export class LibraryStore {
         `
           SELECT
             tracks.id,
+            tracks.folder_id,
             tracks.title,
             tracks.source_type,
             tracks.media_filename,

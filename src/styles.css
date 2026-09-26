@@ -62,3 +62,32 @@
     flex: 0 0 auto;
   }
 }
+
+@layer components {
+  .library-nav {
+    @apply flex min-h-11 w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal;
+  }
+
+  .library-nav-active {
+    @apply bg-teal/10 text-teal hover:bg-teal/15 hover:text-teal;
+  }
+
+  .library-track-row {
+    @apply grid min-w-0 grid-cols-[20px_minmax(0,1fr)_76px] items-center gap-3 border-b border-line/60 transition-colors hover:bg-surface-muted/50 sm:grid-cols-[20px_minmax(0,1fr)_56px_76px] lg:grid-cols-[20px_minmax(0,1fr)_140px_56px_76px] xl:grid-cols-[20px_minmax(0,1fr)_160px_56px_100px_76px];
+  }
+
+  .library-checkbox {
+    @apply size-4 cursor-pointer accent-teal outline-offset-4 focus-visible:outline-2 focus-visible:outline-teal;
+  }
+
+  .library-select {
+    @apply h-11 rounded-lg border border-line-strong bg-surface-muted px-3 text-sm text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal disabled:opacity-50;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-nav,
+  .library-track-row {
+    transition: none;
+  }
+}

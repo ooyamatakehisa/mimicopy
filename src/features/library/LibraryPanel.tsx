@@ -1,263 +1,329 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Check,
-  ListMusic,
-  LoaderCircle,
+  FolderInput,
+  FolderOpen,
   Music2,
-  Pencil,
   RefreshCcw,
-  Trash2,
+  Search,
   X
 } from "lucide-react";
-import { IconButton } from "../../components/ui/Button";
-import { SectionHeader, Surface } from "../../components/ui/Surface";
-import { StatusBadge } from "../../components/ui/StatusBadge";
+import { Button, IconButton } from "../../components/ui/Button";
 import { TextInput } from "../../components/ui/TextInput";
-import { cn } from "../../lib/cn";
-import { formatTime } from "../../lib/playback";
-import type { TrackSummary } from "../../lib/library";
+import { filterLibraryTracks, type LibraryScope } from "../../lib/folders";
 import type { LibraryState } from "./useLibraryState";
-import { formatLibraryDate, getSourceTypeLabel } from "./libraryFormatting";
+import type { FoldersState } from "./useFolders";
+import { FolderActions } from "./FolderActions";
+import { LibraryTrackRow } from "./LibraryTrackRow";
+import { MoveTracksForm } from "./MoveTracksForm";
 
-type LibraryPanelProps = Pick<
-  LibraryState,
-  | "deleteTrackFromLibrary"
-  | "isLibraryLoading"
-  | "isRenamingTrackId"
-  | "loadState"
-  | "message"
-  | "renameTrackInLibrary"
-  | "refreshTracks"
-  | "tracks"
-> & {
+type LibraryPanelProps = {
   activeTrackId: string | null;
   navigateToTrack: (trackId: string) => void;
+  scope: LibraryScope;
+  onNavigate: (scope: LibraryScope) => void;
+  library: LibraryState;
+  folders: FoldersState;
 };
 
 export function LibraryPanel({
   activeTrackId,
-  deleteTrackFromLibrary,
-  isLibraryLoading,
-  isRenamingTrackId,
-  loadState,
-  message,
   navigateToTrack,
-  renameTrackInLibrary,
-  refreshTracks,
-  tracks
+  scope,
+  onNavigate,
+  library,
+  folders
 }: LibraryPanelProps) {
+  const [search, setSearch] = useState("");
+  const [selection, setSelection] = useState<string[]>([]);
+  const [movingIds, setMovingIds] = useState<string[] | null>(null);
+  const [moveNotice, setMoveNotice] = useState("");
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const moveTrigger = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (movingIds === null && moveTrigger.current) {
+      if (moveTrigger.current.isConnected) moveTrigger.current.focus();
+      else headingRef.current?.focus();
+      moveTrigger.current = null;
+    }
+  }, [movingIds]);
+  const folder = folders.foldersQuery.data?.find(
+    (item) => scope === `folder:${item.id}`
+  );
+  const missingFolder =
+    scope.startsWith("folder:") && folders.foldersQuery.isSuccess && !folder;
+  const title =
+    scope === "all"
+      ? "すべての曲"
+      : scope === "unfiled"
+        ? "未分類"
+        : (folder?.name ?? "フォルダ");
+  const scopedTracks = filterLibraryTracks(library.tracks, scope, "");
+  const visibleTracks = filterLibraryTracks(scopedTracks, "all", search);
+  const selectedIds = visibleTracks
+    .filter((track) => selection.includes(track.id))
+    .map((track) => track.id);
+  const allSelected =
+    visibleTracks.length > 0 && selectedIds.length === visibleTracks.length;
+  const isLoading = library.isLibraryLoading || folders.foldersQuery.isFetching;
+  const beginMove = (ids: string[]) => {
+    moveTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    folders.moveMutation.reset();
+    setMoveNotice("");
+    setMovingIds(ids);
+  };
+  const finishMove = (didMove: boolean) => {
+    if (didMove) {
+      setMoveNotice(`${movingIds?.length ?? 0} 曲を移動しました。`);
+      setSelection([]);
+    }
+    setMovingIds(null);
+  };
   return (
-    <Surface
-      className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem]"
+    <section
+      className="min-w-0 bg-surface"
       aria-label="Saved MP3 library"
+      aria-busy={isLoading}
     >
-      <SectionHeader
-        title="Library"
-        description={`${tracks.length} saved MP3s`}
-        action={
-          <IconButton
-            title="一覧を更新"
-            disabled={isLibraryLoading}
-            onClick={refreshTracks}
+      <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5 pt-7 sm:px-7">
+        <div className="min-w-0 flex-1">
+          <h2
+            ref={headingRef}
+            tabIndex={-1}
+            className="break-words text-2xl font-semibold tracking-tight outline-none"
           >
-            {isLibraryLoading ? (
-              <LoaderCircle className="animate-spin" size={18} />
-            ) : (
-              <RefreshCcw size={18} />
-            )}
-          </IconButton>
-        }
-      />
-
-      <div className="mx-4 mb-1 mt-4 grid min-h-14 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-full border border-white/8 bg-white/[0.045] px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3">
-        <StatusBadge state={loadState}>{loadState}</StatusBadge>
-        <span className="min-w-0 truncate">{message}</span>
-      </div>
-
-      <div className="min-h-0 overflow-auto p-4">
-        {tracks.length === 0 ? (
-          <LibraryEmptyState isLoading={isLibraryLoading} />
-        ) : (
-          tracks.map((track) => (
-            <LibraryTrackRow
-              key={track.id}
-              activeTrackId={activeTrackId}
-              navigateToTrack={navigateToTrack}
-              track={track}
-              onDelete={() => void deleteTrackFromLibrary(track.id)}
-              onRename={(title) =>
-                renameTrackInLibrary({ title, trackId: track.id })
-              }
-              isRenaming={isRenamingTrackId === track.id}
+            {title}
+          </h2>
+          <p className="mt-2 text-sm text-muted">
+            {scopedTracks.length} 曲
+            {scope === "unfiled" && " · まだフォルダに入っていない曲"}
+          </p>
+        </div>
+        <IconButton
+          title="一覧を更新"
+          disabled={isLoading}
+          onClick={() => {
+            void folders.refresh();
+          }}
+        >
+          <RefreshCcw
+            size={17}
+            className={isLoading ? "animate-spin" : undefined}
+          />
+        </IconButton>
+        {folder && (
+          <div className="w-full">
+            <FolderActions
+              key={folder.id}
+              folder={folder}
+              folders={folders}
+              onDeleted={() => onNavigate("unfiled")}
             />
-          ))
+          </div>
         )}
       </div>
-    </Surface>
-  );
-}
-
-function LibraryEmptyState({ isLoading }: { isLoading: boolean }) {
-  return (
-    <div className="grid min-h-[360px] place-items-center content-center gap-4 rounded-[2rem] border border-dashed border-white/14 bg-[radial-gradient(circle_at_50%_0%,rgba(67,224,202,0.12),transparent_36%),rgba(255,255,255,0.035)] text-center text-quiet">
-      <span className="grid size-16 place-items-center rounded-full border border-white/10 bg-white/[0.06] text-teal">
-        <ListMusic size={24} aria-hidden="true" />
-      </span>
-      <span className="text-sm">
-        {isLoading ? "読み込み中" : "保存済みMP3はまだありません"}
-      </span>
-    </div>
-  );
-}
-
-function LibraryTrackRow({
-  activeTrackId,
-  isRenaming,
-  navigateToTrack,
-  onDelete,
-  onRename,
-  track
-}: {
-  activeTrackId: string | null;
-  isRenaming: boolean;
-  navigateToTrack: (trackId: string) => void;
-  onDelete: () => void;
-  onRename: (title: string) => Promise<boolean>;
-  track: TrackSummary;
-}) {
-  const [draftTitle, setDraftTitle] = useState(track.title);
-  const [isEditing, setIsEditing] = useState(false);
-  const trimmedTitle = draftTitle.trim();
-
-  const startEditing = () => {
-    setDraftTitle(track.title);
-    setIsEditing(true);
-  };
-
-  const cancelEditing = () => {
-    setDraftTitle(track.title);
-    setIsEditing(false);
-  };
-
-  const saveTitle = async () => {
-    if (!trimmedTitle) {
-      return;
-    }
-
-    if (trimmedTitle === track.title) {
-      setDraftTitle(track.title);
-      setIsEditing(false);
-      return;
-    }
-
-    if (await onRename(trimmedTitle)) {
-      setDraftTitle(trimmedTitle);
-      setIsEditing(false);
-    }
-  };
-
-  return (
-    <div
-      aria-label={`${track.title} library track`}
-      className={cn(
-        "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center overflow-hidden rounded-[1.75rem] border border-white/8 bg-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight [&+&]:mt-3",
-        track.id === activeTrackId &&
-          "border-teal/45 bg-teal/12 shadow-[0_18px_44px_rgba(67,224,202,0.1)]"
+      <div className="relative mx-5 mb-5 sm:mx-7">
+        <Search
+          className="pointer-events-none absolute left-3 top-3 text-muted"
+          size={18}
+          aria-hidden="true"
+        />
+        <TextInput
+          type="search"
+          aria-label="曲を検索"
+          placeholder="曲名で検索"
+          className="w-full rounded-lg pl-10 placeholder:text-muted"
+          value={search}
+          disabled={Boolean(movingIds)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setSelection([]);
+          }}
+        />
+      </div>
+      {library.loadState !== "idle" && (
+        <p
+          className={`px-5 pb-4 text-sm sm:px-7 ${library.loadState === "error" ? "text-danger" : "text-muted"}`}
+          role={library.loadState === "error" ? "alert" : "status"}
+        >
+          {library.message}
+        </p>
       )}
-      data-testid={`library-track-${track.id}`}
-      role="group"
-    >
-      <IconButton
-        className="m-2"
-        aria-label={`${track.title} を開く`}
-        title="曲を開く"
-        onClick={() => navigateToTrack(track.id)}
-      >
-        <Music2 size={18} aria-hidden="true" />
-      </IconButton>
-      <div className="grid min-w-0 grid-cols-[minmax(220px,1fr)_96px_90px_112px_148px] items-center gap-3 px-2 py-4 text-left text-sm text-muted max-[1040px]:grid-cols-[minmax(180px,1fr)_90px_86px_108px] max-lg:grid-cols-[minmax(0,1fr)]">
-        {isEditing ? (
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-            <TextInput
-              aria-label={`${track.title} display name`}
-              autoFocus
-              className="h-10 rounded-2xl text-base font-semibold"
-              disabled={isRenaming}
-              maxLength={180}
-              value={draftTitle}
-              onChange={(event) => setDraftTitle(event.target.value)}
-              onFocus={(event) => event.currentTarget.select()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void saveTitle();
-                }
-
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelEditing();
-                }
-              }}
+      {moveNotice && (
+        <p role="status" className="px-5 pb-4 text-sm text-teal sm:px-7">
+          {moveNotice}
+        </p>
+      )}
+      {missingFolder ? (
+        <div className="px-7 py-16 text-center">
+          <h3 className="font-medium">このフォルダは見つかりません</h3>
+          <p className="mt-2 text-sm text-muted">
+            削除された可能性があります。すべての曲から探してください。
+          </p>
+          <Button className="mt-5" onClick={() => onNavigate("all")}>
+            すべての曲を表示
+          </Button>
+        </div>
+      ) : (
+        <>
+          {movingIds ? (
+            <MoveTracksForm
+              trackIds={movingIds}
+              folders={folders}
+              onDone={() => finishMove(true)}
+              onCancel={() => finishMove(false)}
             />
-            <IconButton
-              className="size-10"
-              disabled={!trimmedTitle || isRenaming}
-              title="表示名を保存"
-              onClick={() => void saveTitle()}
-            >
-              {isRenaming ? (
-                <LoaderCircle className="animate-spin" size={16} />
+          ) : (
+            selectedIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3 border-y border-line bg-surface-muted px-5 py-3 sm:px-7">
+                <span className="text-sm tabular-nums">
+                  {selectedIds.length} 曲を選択中
+                </span>
+                <Button
+                  size="sm"
+                  variant="accent"
+                  onClick={() => beginMove(selectedIds)}
+                >
+                  <FolderInput size={16} />
+                  選択した曲を移動
+                </Button>
+                <IconButton
+                  title="選択を解除"
+                  className="ml-auto size-9"
+                  onClick={() => setSelection([])}
+                >
+                  <X size={16} />
+                </IconButton>
+              </div>
+            )
+          )}
+          {visibleTracks.length > 0 ? (
+            <div className="px-5 sm:px-7">
+              <div className="library-track-row border-b border-line py-3 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  className="library-checkbox"
+                  aria-label="表示中の曲をすべて選択"
+                  checked={allSelected}
+                  disabled={Boolean(movingIds)}
+                  ref={(input) => {
+                    if (input)
+                      input.indeterminate =
+                        selectedIds.length > 0 && !allSelected;
+                  }}
+                  onChange={() =>
+                    setSelection(
+                      allSelected ? [] : visibleTracks.map((track) => track.id)
+                    )
+                  }
+                />
+                <span>曲名</span>
+                <span className="hidden lg:block">フォルダ</span>
+                <span className="hidden text-right sm:block">時間</span>
+                <span className="hidden text-right xl:block">更新日</span>
+                <span className="text-right">操作</span>
+              </div>
+              <div
+                className={
+                  movingIds ? "pointer-events-none opacity-50" : undefined
+                }
+                inert={Boolean(movingIds)}
+              >
+                {visibleTracks.map((track) => (
+                  <LibraryTrackRow
+                    key={track.id}
+                    activeTrackId={activeTrackId}
+                    track={track}
+                    folderName={
+                      folders.foldersQuery.data?.find(
+                        (item) => item.id === track.folderId
+                      )?.name ?? "未分類"
+                    }
+                    selected={selectedIds.includes(track.id)}
+                    onSelect={() =>
+                      setSelection((ids) =>
+                        ids.includes(track.id)
+                          ? ids.filter((id) => id !== track.id)
+                          : [...ids, track.id]
+                      )
+                    }
+                    onMove={() => beginMove([track.id])}
+                    navigateToTrack={navigateToTrack}
+                    onDelete={() =>
+                      void library.deleteTrackFromLibrary(track.id)
+                    }
+                    onRename={(trackTitle) =>
+                      library.renameTrackInLibrary({
+                        title: trackTitle,
+                        trackId: track.id
+                      })
+                    }
+                    isRenaming={library.isRenamingTrackId === track.id}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-72 flex-col items-center justify-center gap-3 px-6 py-14 text-center">
+              {isLoading ? (
+                <p className="text-sm text-muted" role="status">
+                  曲を読み込み中…
+                </p>
               ) : (
-                <Check size={16} />
+                <>
+                  {scope.startsWith("folder:") ? (
+                    <FolderOpen
+                      size={32}
+                      strokeWidth={1.25}
+                      className="mb-2 text-muted"
+                    />
+                  ) : (
+                    <Music2
+                      size={32}
+                      strokeWidth={1.25}
+                      className="mb-2 text-muted"
+                    />
+                  )}
+                  <h3 className="font-medium">
+                    {search
+                      ? "一致する曲がありません"
+                      : scope === "all"
+                        ? "最初の1曲を読み込もう"
+                        : scope === "unfiled"
+                          ? "未分類の曲はありません"
+                          : "このフォルダはまだ空です"}
+                  </h3>
+                  <p className="max-w-md text-sm leading-relaxed text-muted">
+                    {search
+                      ? "別の曲名で検索するか、検索を解除してください。"
+                      : scope === "all"
+                        ? "上のMP3ボタン、またはYouTube URLから曲を追加できます。"
+                        : scope === "unfiled"
+                          ? "新しく読み込んだ曲は、ここに表示されます。"
+                          : "「すべての曲」で曲を選び、このフォルダへ移動できます。"}
+                  </p>
+                  {search ? (
+                    <Button className="mt-2" onClick={() => setSearch("")}>
+                      検索を解除
+                    </Button>
+                  ) : (
+                    scope !== "all" && (
+                      <Button
+                        className="mt-2"
+                        onClick={() => onNavigate("all")}
+                      >
+                        すべての曲から探す
+                      </Button>
+                    )
+                  )}
+                </>
               )}
-            </IconButton>
-            <IconButton
-              className="size-10"
-              disabled={isRenaming}
-              title="表示名の編集をキャンセル"
-              onClick={cancelEditing}
-            >
-              <X size={16} />
-            </IconButton>
-          </div>
-        ) : (
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              className="min-w-0 bg-transparent text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue"
-              type="button"
-              title={`${track.title} を開く`}
-              onClick={() => navigateToTrack(track.id)}
-            >
-              <strong className="block truncate text-base font-semibold leading-tight text-ink">
-                {track.title}
-              </strong>
-            </button>
-            <IconButton
-              className="size-8"
-              title="表示名を編集"
-              onClick={startEditing}
-            >
-              <Pencil size={14} />
-            </IconButton>
-          </div>
-        )}
-        <span className="truncate max-lg:hidden">
-          {getSourceTypeLabel(track.sourceType)}
-        </span>
-        <span className="truncate max-lg:hidden">{formatTime(track.duration)}</span>
-        <span className="truncate max-lg:hidden">{track.markerCount} markers</span>
-        <span className="truncate max-[1040px]:hidden">
-          Updated {formatLibraryDate(track.updatedAt)}
-        </span>
-      </div>
-      <IconButton
-        className="m-2 self-center"
-        variant="danger"
-        title="保存済みMP3を削除"
-        onClick={onDelete}
-      >
-        <Trash2 size={17} />
-      </IconButton>
-    </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }

@@ -9,6 +9,7 @@ import {
 export type LibrarySourceType = "upload" | "youtube" | "imported";
 
 export type TrackSummary = {
+  folderId: string | null;
   id: string;
   title: string;
   sourceType: LibrarySourceType;
@@ -26,6 +27,7 @@ export type TrackDetail = TrackSummary & {
 
 export function toTrackSummary(track: TrackDetail): TrackSummary {
   return {
+    folderId: track.folderId,
     createdAt: track.createdAt,
     duration: track.duration,
     id: track.id,
@@ -150,6 +152,7 @@ export function parseTrackSummary(value: unknown): TrackSummary | null {
     return null;
   }
 
+  const folderId = value.folderId ?? null;
   const id = readString(value, "id");
   const title = readString(value, "title");
   const sourceType = readString(value, "sourceType");
@@ -160,6 +163,7 @@ export function parseTrackSummary(value: unknown): TrackSummary | null {
   const updatedAt = readString(value, "updatedAt");
 
   if (
+    (folderId !== null && typeof folderId !== "string") ||
     !id ||
     !title ||
     !sourceType ||
@@ -174,6 +178,7 @@ export function parseTrackSummary(value: unknown): TrackSummary | null {
   }
 
   return {
+    folderId,
     createdAt,
     duration,
     id,
