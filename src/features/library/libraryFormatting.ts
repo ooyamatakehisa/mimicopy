@@ -1,5 +1,3 @@
-import type { LibrarySourceType } from "../../lib/library";
-
 const libraryDateFormatter = new Intl.DateTimeFormat("ja-JP", {
   day: "numeric",
   hour: "2-digit",
@@ -15,16 +13,4 @@ export function formatLibraryDate(value: string) {
   }
 
   return libraryDateFormatter.format(date);
-}
-
-export function getSourceTypeLabel(sourceType: LibrarySourceType) {
-  if (sourceType === "youtube") {
-    return "YouTube";
-  }
-
-  if (sourceType === "imported") {
-    return "Imported";
-  }
-
-  return "MP3";
 }

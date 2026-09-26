@@ -19,6 +19,8 @@ STORY: Choose all songs, unfiled songs or a named folder. Search within that vie
 
 FIRST VIEWPORT: Import controls stay above the library. A 15rem sidebar carries counts, collection links and folder creation. The main area has a view title, search, optional selection tools and aligned track rows. Small screens place navigation above the rows, keeping names and actions usable without horizontal overflow.
 
+ROW DENSITY: Do not display source-type labels such as YouTube or MP3 in song rows. The user explicitly rejected that extra line. Desktop rows keep title and metadata on one line with compact vertical padding; compact screens retain folder and duration metadata where the separate columns are hidden.
+
 FORM: Local extension of the established library; no concept seed is applicable. The signature interaction is selecting multiple tracks and dragging them into a folder while both source and destination counts update. dnd kit owns drag activation, collision detection, scrolling, keyboard sensors, overlay positioning and screen-reader announcements. Movement starts after a small pointer threshold; a normal title click still opens the track. A compact teal preview follows the pointer, and the destination gains a teal outline and explicit move label. No ornamental animation; the existing move form and drag drop share one TanStack mutation and its success/error state.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
