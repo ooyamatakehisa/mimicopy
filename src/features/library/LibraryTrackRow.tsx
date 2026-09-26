@@ -15,7 +15,7 @@ import { cn } from "../../lib/cn";
 import { formatTime } from "../../lib/playback";
 import type { TrackDragData } from "../../lib/libraryDrag";
 import type { TrackSummary } from "../../lib/library";
-import { formatLibraryDate, getSourceTypeLabel } from "./libraryFormatting";
+import { formatLibraryDate } from "./libraryFormatting";
 
 export function LibraryTrackRow({
   activeTrackId,
@@ -113,7 +113,7 @@ export function LibraryTrackRow({
         checked={selected}
         onChange={onSelect}
       />
-      <div className="col-span-2 min-w-0 py-4 sm:col-span-1">
+      <div className="col-span-2 min-w-0 py-3 sm:col-span-1">
         <div className="flex min-w-0 items-center gap-2">
           <button
             ref={handleRef}
@@ -196,12 +196,11 @@ export function LibraryTrackRow({
         </div>
         <div
           className={cn(
-            "mt-1 flex min-w-0 items-center gap-3 text-xs text-muted max-sm:min-h-9",
+            "mt-1 flex min-w-0 items-center gap-3 text-xs text-muted max-sm:min-h-9 lg:hidden",
             !isEditing && "max-sm:pr-20"
           )}
         >
-          <span>{getSourceTypeLabel(track.sourceType)}</span>
-          <span className="truncate lg:hidden">{folderName}</span>
+          <span className="truncate">{folderName}</span>
           <span className="tabular-nums sm:hidden">
             {formatTime(track.duration)}
           </span>
@@ -221,7 +220,7 @@ export function LibraryTrackRow({
       </span>
       <div
         className={cn(
-          "flex items-center justify-end gap-1 max-sm:absolute max-sm:bottom-4 max-sm:right-0",
+          "flex items-center justify-end gap-1 max-sm:absolute max-sm:bottom-3 max-sm:right-0",
           isEditing && "hidden sm:flex"
         )}
       >
