@@ -2,6 +2,7 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type Locator,
   type Page
 } from "@playwright/test";
 
@@ -52,7 +53,9 @@ test("organizes tracks across folders, persists navigation, and keeps tracks whe
   await page.getByRole("button", { name: "選択した曲を移動" }).click();
   await page.getByLabel("2 曲の移動先").selectOption({ label: folderA });
   await page.getByRole("button", { name: "移動する", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("2 曲を移動しました。");
+  await expect(page.getByRole("status", { name: "移動結果" })).toContainText(
+    "2 曲を移動しました。"
+  );
   await page.goto(folderAUrl);
   await expect(page.getByTestId(`library-track-${firstId}`)).toBeVisible();
   await expect(page.getByTestId(`library-track-${secondId}`)).toBeVisible();
@@ -110,6 +113,150 @@ test("organizes tracks across folders, persists navigation, and keeps tracks whe
   await expect(page.getByText("このフォルダは見つかりません")).toBeVisible();
 });
 
+async function dragTrack(page: Page, track: Locator, destination: Locator) {
+  await track.scrollIntoViewIfNeeded();
+  const start = await track.locator("[data-track-link]").boundingBox();
+  const end = await destination.boundingBox();
+  if (!start || !end)
+    throw new Error("Drag source or destination is not visible");
+  const x = start.x + start.width / 2;
+  const y = start.y + start.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 12, y, { steps: 3 });
+  await expect(page.getByTestId("track-drag-preview")).toBeVisible();
+  await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, {
+    steps: 12
+  });
+}
+
+test("drags single and selected tracks into folders and back to unfiled", async ({
+  page,
+  request
+}) => {
+  const suffix = Date.now();
+  const first = await uploadFixture(request, `Drag A ${suffix}`);
+  const second = await uploadFixture(request, `Drag B ${suffix}`);
+  const third = await uploadFixture(request, `Drag C ${suffix}`);
+  await page.goto("/");
+  const folderA = `Drop A ${suffix}`;
+  const folderB = `Drop B ${suffix}`;
+  await createFolder(page, folderA);
+  await createFolder(page, folderB);
+  const navigation = page.getByRole("navigation", {
+    name: "ライブラリのフォルダ"
+  });
+  await navigation.getByTitle("すべての曲").click();
+  await page.getByLabel("曲を検索").fill(`Drag`);
+  const firstRow = page.getByTestId(`library-track-${first}`);
+  const secondRow = page.getByTestId(`library-track-${second}`);
+  const thirdRow = page.getByTestId(`library-track-${third}`);
+  await firstRow.getByRole("checkbox").check();
+  await secondRow.getByRole("checkbox").check();
+
+  // An unselected song moves alone, even when other songs are selected.
+  await dragTrack(page, thirdRow, navigation.getByTitle(folderA));
+  await expect(navigation.getByTitle(folderA)).toHaveAttribute(
+    "data-drop-active",
+    "true"
+  );
+  await page.mouse.up();
+  await expect(page.getByRole("status", { name: "移動結果" })).toContainText(
+    "1 曲を移動しました。"
+  );
+  await expect(
+    page.getByRole("heading", { name: "すべての曲", exact: true })
+  ).toBeVisible();
+  await expect(thirdRow.getByTitle(folderA, { exact: true })).toBeVisible();
+  await expect(firstRow.getByTitle("未分類", { exact: true })).toBeVisible();
+
+  await firstRow.getByRole("checkbox").check();
+  await secondRow.getByRole("checkbox").check();
+  await dragTrack(page, firstRow, navigation.getByTitle(folderB));
+  await expect(page.getByTestId("track-drag-preview")).toContainText(
+    "2 曲を移動"
+  );
+  await page.mouse.up();
+  await expect(page.getByRole("status", { name: "移動結果" })).toContainText(
+    "2 曲を移動しました。"
+  );
+  await navigation.getByTitle(folderB).click();
+  await expect(firstRow).toBeVisible();
+  await expect(secondRow).toBeVisible();
+  await page.reload();
+  await expect(firstRow).toBeVisible();
+
+  await dragTrack(
+    page,
+    firstRow,
+    navigation.getByTitle("未分類", { exact: true })
+  );
+  await page.mouse.up();
+  await expect(firstRow).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: folderB, exact: true })
+  ).toBeFocused();
+  await navigation.getByTitle("未分類", { exact: true }).click();
+  await expect(firstRow).toBeVisible();
+  await expect(secondRow).toHaveCount(0);
+});
+
+test("cancels invalid drops and keyboard drags, and retries failed drops", async ({
+  page,
+  request
+}) => {
+  const suffix = Date.now();
+  const id = await uploadFixture(request, `Drag error ${suffix}`);
+  const folder = `Retry ${suffix}`;
+  await page.goto("/");
+  await createFolder(page, folder);
+  const navigation = page.getByRole("navigation", {
+    name: "ライブラリのフォルダ"
+  });
+  await navigation.getByTitle("すべての曲").click();
+  await page.getByLabel("曲を検索").fill(`Drag error ${suffix}`);
+  const row = page.getByTestId(`library-track-${id}`);
+  let moveRequests = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/library/move")) moveRequests++;
+  });
+  for (const target of ["すべての曲", "未分類"]) {
+    await dragTrack(page, row, navigation.getByTitle(target, { exact: true }));
+    await expect(
+      navigation.getByTitle(target, { exact: true })
+    ).not.toHaveAttribute("data-drop-active");
+    await page.mouse.up();
+    await expect(page.getByTestId("track-drag-preview")).toHaveCount(0);
+  }
+  await row.locator("[data-drag-handle]").focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByTestId("track-drag-preview")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("track-drag-preview")).toHaveCount(0);
+  expect(moveRequests).toBe(0);
+
+  await page.route("**/api/library/move", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "移動に失敗しました。もう一度お試しください。"
+      })
+    })
+  );
+  await dragTrack(page, row, navigation.getByTitle(folder));
+  await page.mouse.up();
+  await expect(page.getByRole("alert")).toContainText("移動に失敗しました");
+  await expect(row.getByTitle("未分類", { exact: true })).toBeVisible();
+  await expect(row).toBeFocused();
+  await page.unroute("**/api/library/move");
+  await page.getByRole("button", { name: "もう一度試す" }).click();
+  await expect(page.getByRole("status", { name: "移動結果" })).toContainText(
+    "1 曲を移動しました。"
+  );
+  await expect(row.getByTitle(folder, { exact: true })).toBeVisible();
+});
+
 test("supports keyboard folder creation, errors, cancellation and compact screens", async ({
   page,
   request
@@ -164,7 +311,9 @@ test("supports keyboard folder creation, errors, cancellation and compact screen
   await expect(page.getByLabel("1 曲の移動先")).toHaveValue(/.+/);
   await page.unroute("**/api/library/move");
   await page.getByRole("button", { name: "移動する", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("1 曲を移動しました。");
+  await expect(page.getByRole("status", { name: "移動結果" })).toContainText(
+    "1 曲を移動しました。"
+  );
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth

@@ -1,3 +1,5 @@
+import { useDragDropMonitor } from "@dnd-kit/react";
+import { getTrackMove } from "../../lib/libraryDrag";
 import { useEffect, useRef, useState } from "react";
 import {
   FolderInput,
@@ -36,16 +38,23 @@ export function LibraryPanel({
   const [search, setSearch] = useState("");
   const [selection, setSelection] = useState<string[]>([]);
   const [movingIds, setMovingIds] = useState<string[] | null>(null);
-  const [moveNotice, setMoveNotice] = useState("");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const moveTrigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (movingIds === null && moveTrigger.current) {
+    if (
+      movingIds === null &&
+      !folders.moveMutation.isPending &&
+      moveTrigger.current
+    ) {
       if (moveTrigger.current.isConnected) moveTrigger.current.focus();
       else headingRef.current?.focus();
       moveTrigger.current = null;
     }
-  }, [movingIds]);
+  }, [
+    movingIds,
+    folders.moveMutation.isPending,
+    folders.moveMutation.isSuccess
+  ]);
   const folder = folders.foldersQuery.data?.find(
     (item) => scope === `folder:${item.id}`
   );
@@ -71,16 +80,34 @@ export function LibraryPanel({
         ? document.activeElement
         : null;
     folders.moveMutation.reset();
-    setMoveNotice("");
     setMovingIds(ids);
   };
   const finishMove = (didMove: boolean) => {
     if (didMove) {
-      setMoveNotice(`${movingIds?.length ?? 0} 曲を移動しました。`);
       setSelection([]);
     }
     setMovingIds(null);
   };
+  useDragDropMonitor({
+    onBeforeDragStart: (event) => {
+      if (movingIds || folders.moveMutation.isPending) event.preventDefault();
+    },
+    onDragStart: () => folders.moveMutation.reset(),
+    onDragEnd: ({ operation, canceled }) => {
+      if (canceled) return;
+      const move = getTrackMove(
+        operation.source?.data,
+        operation.target?.data,
+        library.tracks
+      );
+      if (!move || folders.moveMutation.isPending) return;
+      moveTrigger.current =
+        operation.source?.element instanceof HTMLElement
+          ? operation.source.element
+          : null;
+      folders.moveMutation.mutate(move, { onSuccess: () => finishMove(true) });
+    }
+  });
   return (
     <section
       className="min-w-0 bg-surface"
@@ -136,7 +163,7 @@ export function LibraryPanel({
           placeholder="曲名で検索"
           className="w-full rounded-lg pl-10 placeholder:text-muted"
           value={search}
-          disabled={Boolean(movingIds)}
+          disabled={Boolean(movingIds) || folders.moveMutation.isPending}
           onChange={(event) => {
             setSearch(event.target.value);
             setSelection([]);
@@ -151,10 +178,39 @@ export function LibraryPanel({
           {library.message}
         </p>
       )}
-      {moveNotice && (
-        <p role="status" className="px-5 pb-4 text-sm text-teal sm:px-7">
-          {moveNotice}
+      {folders.moveMutation.isSuccess && (
+        <p
+          role="status"
+          aria-label="移動結果"
+          className="px-5 pb-4 text-sm text-teal sm:px-7"
+        >
+          {folders.moveMutation.variables.trackIds.length} 曲を移動しました。
         </p>
+      )}
+      {!movingIds && folders.moveMutation.isPending && (
+        <p role="status" className="px-5 pb-4 text-sm text-muted sm:px-7">
+          曲を移動しています…
+        </p>
+      )}
+      {!movingIds && folders.moveMutation.isError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 px-5 pb-4 text-sm text-danger sm:px-7"
+        >
+          <span>{folders.moveMutation.error.message}</span>
+          <Button
+            size="sm"
+            onClick={() => {
+              const previousMove = folders.moveMutation.variables;
+              if (previousMove)
+                folders.moveMutation.mutate(previousMove, {
+                  onSuccess: () => finishMove(true)
+                });
+            }}
+          >
+            もう一度試す
+          </Button>
+        </div>
       )}
       {missingFolder ? (
         <div className="px-7 py-16 text-center">
@@ -184,6 +240,7 @@ export function LibraryPanel({
                 <Button
                   size="sm"
                   variant="accent"
+                  disabled={folders.moveMutation.isPending}
                   onClick={() => beginMove(selectedIds)}
                 >
                   <FolderInput size={16} />
@@ -207,7 +264,9 @@ export function LibraryPanel({
                   className="library-checkbox"
                   aria-label="表示中の曲をすべて選択"
                   checked={allSelected}
-                  disabled={Boolean(movingIds)}
+                  disabled={
+                    Boolean(movingIds) || folders.moveMutation.isPending
+                  }
                   ref={(input) => {
                     if (input)
                       input.indeterminate =
@@ -229,12 +288,18 @@ export function LibraryPanel({
                 className={
                   movingIds ? "pointer-events-none opacity-50" : undefined
                 }
-                inert={Boolean(movingIds)}
+                inert={Boolean(movingIds) || folders.moveMutation.isPending}
               >
                 {visibleTracks.map((track) => (
                   <LibraryTrackRow
                     key={track.id}
                     activeTrackId={activeTrackId}
+                    dragTrackIds={
+                      selectedIds.includes(track.id) ? selectedIds : [track.id]
+                    }
+                    dragDisabled={
+                      Boolean(movingIds) || folders.moveMutation.isPending
+                    }
                     track={track}
                     folderName={
                       folders.foldersQuery.data?.find(

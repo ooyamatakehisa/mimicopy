@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router";
 import { AppHeader } from "../../components/layout/AppHeader";
 import type { LibraryScope } from "../../lib/folders";
 import { LibraryHeaderActions } from "./LibraryHeaderActions";
+import { LibraryDragDrop } from "./LibraryDragDrop";
 import { LibraryPanel } from "./LibraryPanel";
 import { FolderSidebar } from "./FolderSidebar";
 import { useLibraryState } from "./useLibraryState";
@@ -48,23 +49,25 @@ export function LibraryPage({
         }
         onNavigateHome={navigateToLibrary}
       />
-      <div className="grid min-h-[calc(100dvh-148px)] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface lg:grid-cols-[260px_minmax(0,1fr)]">
-        <FolderSidebar
-          scope={scope}
-          onNavigate={onNavigate}
-          tracks={library.tracks}
-          folders={folders}
-        />
-        <LibraryPanel
-          key={scope}
-          scope={scope}
-          onNavigate={onNavigate}
-          library={library}
-          folders={folders}
-          activeTrackId={activeTrackId}
-          navigateToTrack={navigateToTrack}
-        />
-      </div>
+      <LibraryDragDrop>
+        <div className="grid min-h-[calc(100dvh-148px)] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface lg:grid-cols-[260px_minmax(0,1fr)]">
+          <FolderSidebar
+            scope={scope}
+            onNavigate={onNavigate}
+            tracks={library.tracks}
+            folders={folders}
+          />
+          <LibraryPanel
+            key={scope}
+            scope={scope}
+            onNavigate={onNavigate}
+            library={library}
+            folders={folders}
+            activeTrackId={activeTrackId}
+            navigateToTrack={navigateToTrack}
+          />
+        </div>
+      </LibraryDragDrop>
     </>
   );
 }

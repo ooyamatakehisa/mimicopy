@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, FolderOpen, FolderPlus, Inbox, Library } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 import { Button } from "../../components/ui/Button";
-import { cn } from "../../lib/cn";
+import { LibraryFolderButton } from "./LibraryFolderButton";
 import type { LibraryScope } from "../../lib/folders";
 import type { TrackSummary } from "../../lib/library";
 import { FolderNameForm } from "./FolderNameForm";
@@ -37,14 +37,12 @@ export function FolderSidebar({
     {
       scope: "all" as const,
       name: "すべての曲",
-      count: tracks.length,
-      icon: Library
+      count: tracks.length
     },
     {
       scope: "unfiled" as const,
       name: "未分類",
-      count: counts.get("unfiled") ?? 0,
-      icon: Inbox
+      count: counts.get("unfiled") ?? 0
     }
   ];
   return (
@@ -83,51 +81,40 @@ export function FolderSidebar({
         aria-label="ライブラリのフォルダ"
         className="hidden space-y-1 lg:block"
       >
-        {entries.map(({ scope: itemScope, name, count, icon: Icon }) => (
-          <button
+        {entries.map(({ scope: itemScope, name, count }) => (
+          <LibraryFolderButton
             key={itemScope}
-            type="button"
-            aria-current={scope === itemScope ? "page" : undefined}
-            className={cn(
-              "library-nav",
-              scope === itemScope && "library-nav-active"
-            )}
-            onClick={() => onNavigate(itemScope)}
-          >
-            <Icon size={18} aria-hidden="true" />
-            <span className="flex-1 text-left">{name}</span>
-            <span className="text-xs tabular-nums">{count}</span>
-          </button>
+            scope={itemScope}
+            active={scope === itemScope}
+            name={name}
+            count={count}
+            tracks={tracks}
+            disabled={folders.moveMutation.isPending}
+            onNavigate={onNavigate}
+          />
         ))}
         <div className="flex items-center justify-between pb-2 pt-7 text-xs text-muted">
           <span>フォルダ</span>
           <span>{folders.foldersQuery.data?.length ?? 0}</span>
         </div>
         <div className="max-h-48 space-y-1 overflow-y-auto lg:max-h-[48vh]">
-          {folders.foldersQuery.data?.map((folder) => {
-            const active = scope === `folder:${folder.id}`;
-            const Icon = active ? FolderOpen : Folder;
-            return (
-              <button
-                key={folder.id}
-                type="button"
-                title={folder.name}
-                aria-current={active ? "page" : undefined}
-                className={cn("library-nav", active && "library-nav-active")}
-                onClick={() => onNavigate(`folder:${folder.id}`)}
-              >
-                <Icon size={18} aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {folder.name}
-                </span>
-                <span className="text-xs tabular-nums">
-                  {counts.get(folder.id) ?? 0}
-                </span>
-              </button>
-            );
-          })}
+          {folders.foldersQuery.data?.map((folder) => (
+            <LibraryFolderButton
+              key={folder.id}
+              scope={`folder:${folder.id}`}
+              active={scope === `folder:${folder.id}`}
+              name={folder.name}
+              count={counts.get(folder.id) ?? 0}
+              tracks={tracks}
+              disabled={folders.moveMutation.isPending}
+              onNavigate={onNavigate}
+            />
+          ))}
         </div>
       </nav>
+      <p className="mt-4 hidden text-xs leading-relaxed text-muted lg:block">
+        曲をフォルダにドラッグして移動。複数選択にも対応しています。
+      </p>
       {folders.foldersQuery.isPending && (
         <p className="py-3 text-sm text-muted" role="status">
           フォルダを読み込み中…
