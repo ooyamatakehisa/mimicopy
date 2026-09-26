@@ -83,7 +83,7 @@ export function LibraryHeaderActions({
       </Button>
 
       <form
-        className="grid min-h-11 min-w-[420px] max-w-[820px] flex-1 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] py-0 pl-4 pr-1 transition-[background,border-color,box-shadow] focus-within:border-teal/55 focus-within:bg-white/[0.09] focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-lg:w-full max-lg:min-w-0 max-sm:grid-cols-[auto_minmax(0,1fr)_auto] max-sm:py-1"
+        className="grid min-h-11 min-w-[420px] max-w-[820px] flex-1 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] py-0 pl-4 pr-1 transition-[background,border-color,box-shadow] focus-within:border-teal/55 focus-within:bg-white/[0.09] focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-lg:w-full max-lg:min-w-0 max-sm:grid-cols-[auto_minmax(0,1fr)_auto] max-sm:rounded-xl max-sm:py-1"
         onSubmit={handleYoutubeSubmit}
       >
         <label className="sr-only" htmlFor="youtube-url">
@@ -105,7 +105,7 @@ export function LibraryHeaderActions({
         <select
           id="youtube-target-stem"
           aria-label="分離する楽器"
-          className="h-9 max-w-36 rounded-full border border-white/10 bg-[#17201f] px-3 text-sm text-ink outline-none focus:border-teal/55 max-sm:col-span-2 max-sm:col-start-2 max-sm:max-w-none"
+          className="h-9 max-w-36 rounded-full border border-white/10 bg-[#17201f] px-3 text-sm text-ink outline-none focus:border-teal/55 max-sm:col-start-2 max-sm:row-start-2 max-sm:max-w-none"
           value={targetStem ?? ""}
           onChange={(event) => {
             const value = event.target.value;
@@ -119,7 +119,7 @@ export function LibraryHeaderActions({
             </option>
           ))}
         </select>
-        <IconButton type="submit" title="YouTubeを変換" disabled={isConverting}>
+        <IconButton className="max-sm:col-start-3 max-sm:row-start-2" type="submit" title="YouTubeを変換" disabled={isConverting}>
           {isConverting ? (
             <LoaderCircle className="animate-spin" size={18} />
           ) : (

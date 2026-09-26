@@ -75,6 +75,22 @@ pnpm dev
 
 Open the client URL printed by Vite.
 
+## Library Folders
+
+The library supports one level of folders. Use **新しいフォルダ** to create
+one, then select tracks and choose **選択した曲を移動**, or use a track's
+folder button. Choose **未分類** as the destination to remove a track from
+its folder. Search applies to the current folder or collection.
+
+Open a folder to rename or delete it. Deleting a folder keeps its tracks,
+markers and separated audio and returns the tracks to **未分類**. New imports
+start in **未分類**. Folder selection survives reloads and is restored when
+returning from the track editor. On smaller screens, use the folder selector
+above the list. Folder names can be saved with Enter or cancelled with Escape.
+
+Existing SQLite libraries are migrated automatically without changing media
+files. Folder memberships and names are stored in the same database.
+
 ## Stem Separation
 
 When importing a YouTube URL, choose either `音源分離なし` or one target:

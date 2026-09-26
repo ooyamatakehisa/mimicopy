@@ -84,7 +84,7 @@ function LibraryRoute() {
       navigateToLibrary={() => navigate("/")}
       navigateToTrack={(trackId) =>
         navigate(`/tracks/${encodeURIComponent(trackId)}`, {
-          state: { activeTrackId: trackId }
+          state: { activeTrackId: trackId, librarySearch: location.search }
         })
       }
     />
@@ -92,6 +92,8 @@ function LibraryRoute() {
 }
 
 function TrackRoute() {
+  const location = useLocation();
+  const librarySearch = readLibrarySearch(location.state);
   const navigate = useNavigate();
   const { trackId } = useParams<"trackId">();
 
@@ -102,11 +104,24 @@ function TrackRoute() {
   return (
     <TrackEditorPage
       navigateToLibrary={() =>
-        navigate("/", {
-          state: { activeTrackId: trackId }
-        })
+        navigate(
+          { pathname: "/", search: librarySearch },
+          { state: { activeTrackId: trackId } }
+        )
       }
       trackId={trackId}
     />
   );
+}
+
+function readLibrarySearch(state: unknown): string {
+  if (
+    state &&
+    typeof state === "object" &&
+    "librarySearch" in state &&
+    typeof state.librarySearch === "string"
+  ) {
+    return state.librarySearch;
+  }
+  return "";
 }

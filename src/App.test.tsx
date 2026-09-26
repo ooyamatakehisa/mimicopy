@@ -14,6 +14,7 @@ const baseTimestamp = "2026-07-15T00:00:00.000Z";
 
 function toSummary(track: TrackDetail): TrackSummary {
   return {
+    folderId: track.folderId,
     createdAt: track.createdAt,
     duration: track.duration,
     id: track.id,
@@ -27,6 +28,7 @@ function toSummary(track: TrackDetail): TrackSummary {
 
 function createTrack(overrides: Partial<TrackDetail> = {}): TrackDetail {
   return {
+    folderId: null,
     createdAt: baseTimestamp,
     duration: 10,
     id: "track-1",
@@ -91,6 +93,10 @@ describe("App", () => {
               ? input.toString()
               : input.url;
         const method = init?.method ?? "GET";
+
+        if (url === "/api/folders" && method === "GET") {
+          return Response.json({ folders: [] });
+        }
 
         if (url === "/api/tracks" && method === "GET") {
           return Response.json({ tracks: tracks.map(toSummary) });

@@ -344,3 +344,71 @@ describe("LibraryStore", () => {
     reopenedStore.close();
   });
 });
+
+describe("library folders", () => {
+  it("persists folder moves and preserves audio, markers and stems when deleting a folder", async () => {
+    const paths = await createTempStorage();
+    const store = createLibraryStore(paths);
+    const track = store.createTrack({ title: "Practice", sourceType: "youtube", mediaFilename: "practice.mp3", duration: 120 });
+    store.replaceMarkers(track.id, [{ id: "chorus", label: "Chorus", time: 30 }]);
+    store.createSeparation({ trackId: track.id, targetStem: "guitar", mediaFilename: "guitar.mp3", remainderMediaFilename: "other.mp3" });
+    const first = store.saveFolder("  Guitar  ");
+    const second = store.saveFolder("Set list");
+    store.moveTracks([track.id], first.id);
+    expect(store.listTracks()[0]?.folderId).toBe(first.id);
+    store.moveTracks([track.id], second.id);
+    store.saveFolder("Live set", second.id);
+    store.close();
+    const reopened = createLibraryStore(paths);
+    try {
+      expect(reopened.listFolders()).toContainEqual({ id: second.id, name: "Live set" });
+      expect(reopened.getTrack(track.id)?.folderId).toBe(second.id);
+      reopened.deleteFolder(second.id);
+      expect(reopened.getTrack(track.id)).toMatchObject({
+        folderId: null, mediaUrl: track.mediaUrl,
+        markers: [{ id: "chorus", label: "Chorus", time: 30 }],
+        separation: { targetStem: "guitar", status: "queued" }
+      });
+      reopened.moveTracks([track.id], first.id);
+      reopened.moveTracks([track.id], null);
+      expect(reopened.getTrack(track.id)?.folderId).toBeNull();
+    } finally { reopened.close(); await rm(path.dirname(paths.databasePath), { recursive: true, force: true }); }
+  });
+
+  it("rejects invalid folders and rolls back an entire batch if a track is missing", async () => {
+    const paths = await createTempStorage();
+    const store = createLibraryStore(paths);
+    try {
+      const track = store.createTrack({ title: "Song", sourceType: "upload", mediaFilename: "song.mp3", duration: 10 });
+      const folder = store.saveFolder("Practice");
+      expect(() => store.saveFolder(" practice ")).toThrow("同じ名前");
+      expect(() => store.saveFolder(" \n ")).toThrow("1〜80文字");
+      expect(() => store.saveFolder("a".repeat(81))).toThrow("1〜80文字");
+      expect(() => store.saveFolder("a\0b")).toThrow("1〜80文字");
+      expect(() => store.saveFolder("Rename", "missing")).toThrow("見つかりません");
+      expect(() => store.moveTracks([track.id], "missing")).toThrow("移動先");
+      expect(() => store.moveTracks([track.id, "missing"], folder.id)).toThrow("曲が見つかりません");
+      expect(store.getTrack(track.id)?.folderId).toBeNull();
+      expect(store.listFolders()).toEqual([folder]);
+    } finally { store.close(); await rm(path.dirname(paths.databasePath), { recursive: true, force: true }); }
+  });
+
+  it("migrates an existing database without losing tracks and is safe to reopen", async () => {
+    const paths = await createTempStorage();
+    const old = new DatabaseSync(paths.databasePath);
+    old.exec(`CREATE TABLE tracks (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, source_type TEXT NOT NULL,
+      media_filename TEXT NOT NULL UNIQUE, duration REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    ); INSERT INTO tracks VALUES ('old', 'Old song', 'upload', 'old.mp3', 30, '2026-01-01', '2026-01-01');`);
+    old.close();
+    const store = createLibraryStore(paths);
+    expect(store.getTrack("old")).toMatchObject({ folderId: null, title: "Old song", duration: 30 });
+    const folder = store.saveFolder("Migrated");
+    store.moveTracks(["old"], folder.id);
+    store.close();
+    const reopened = createLibraryStore(paths);
+    try { expect(reopened.getTrack("old")?.folderId).toBe(folder.id); }
+    finally { reopened.close(); await rm(path.dirname(paths.databasePath), { recursive: true, force: true }); }
+  });
+});
