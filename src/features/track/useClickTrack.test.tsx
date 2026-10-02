@@ -9,7 +9,9 @@ const beatGrid: BeatGrid = {
   beats: [{ isDownbeat: true, position: 1, time: 0.5 }],
   beatsPerBar: [4],
   downbeats: [0.5],
-  source: "madmom"
+  source: "beat-this",
+  model: "final0",
+  postprocessor: "dbn"
 };
 
 describe("useClickTrack", () => {

@@ -106,7 +106,9 @@ describe("beat grid API", () => {
           ],
           beatsPerBar: [4],
           downbeats: [0.5],
-          source: "madmom"
+          source: "beat-this",
+          model: "final0",
+          postprocessor: "dbn"
         };
       },
       storageDir
@@ -159,7 +161,9 @@ describe("beat grid API", () => {
           ],
           beatsPerBar: [4],
           downbeats: [0.5],
-          source: "madmom"
+          source: "beat-this",
+          model: "final0",
+          postprocessor: "dbn"
         },
         error: null,
         status: "completed"
@@ -194,7 +198,9 @@ describe("beat grid API", () => {
           ],
           beatsPerBar: [4],
           downbeats: [0.25],
-          source: "madmom"
+          source: "beat-this",
+          model: "final0",
+          postprocessor: "dbn"
         };
       },
       convertYoutubeAudio: async (videoId, outputPath) => {
@@ -248,7 +254,9 @@ describe("beat grid API", () => {
           ],
           beatsPerBar: [4],
           downbeats: [0.25],
-          source: "madmom"
+          source: "beat-this",
+          model: "final0",
+          postprocessor: "dbn"
         },
         error: null,
         status: "completed"
@@ -284,7 +292,9 @@ describe("YouTube stem separation API", () => {
         beats: [],
         beatsPerBar: [4],
         downbeats: [],
-        source: "madmom"
+        source: "beat-this",
+        model: "final0",
+        postprocessor: "dbn"
       }),
       convertYoutubeAudio: async (videoId, outputPath) => {
         expect(videoId).toBe("OS45uTF_8P0");

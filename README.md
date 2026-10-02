@@ -17,31 +17,35 @@ For local development without Docker:
 - Node.js 24.18.0
 - pnpm 11+
 - `ffmpeg` in `PATH` for YouTube-to-mp3 conversion
-- Python with `madmom` installed for beat/downbeat analysis
+- Python 3.11 with development headers, Git, and a C compiler for Beat This! beat/downbeat analysis
 
 If `ffmpeg` is installed in a custom location for development, start the server
 with `FFMPEG_PATH=/path/to/ffmpeg pnpm dev`.
 
-Install madmom for the Python interpreter used by the server:
+Install the pinned CPU inference dependencies in a virtual environment:
 
 ```sh
-python3 -m pip install madmom
+python3.11 -m venv /tmp/mimicopy-beat-this
+/tmp/mimicopy-beat-this/bin/pip install -r requirements-beat-this.txt
+MIMICOPY_BEAT_PYTHON=/tmp/mimicopy-beat-this/bin/python pnpm dev
 ```
 
-If madmom is installed in a custom Python environment, start the server with
-`MIMICOPY_MADMOM_PYTHON=/path/to/python pnpm dev`.
+[Beat This!](https://github.com/CPJKU/beat_this) uses the `final0` checkpoint
+and DBN postprocessing (`dbn=True`), with the upstream 3/4 and 4/4 meter
+candidates. madmom is used only for DBN decoding; its old RNN is not used.
+`beatsPerBar` records observed complete measures and is empty when no complete measure was detected.
+`MIMICOPY_BEATS_PER_BAR` and `MIMICOPY_MADMOM_PYTHON` are no longer used.
 
-The downbeat tracker models 3/4 and 4/4 by default. Override that with a comma
-separated list:
-
-```sh
-MIMICOPY_BEATS_PER_BAR=4 pnpm dev
-```
+CPU inference uses two threads by default; override with `MIMICOPY_BEAT_THREADS`.
+`MIMICOPY_BEAT_ANALYSIS_TIMEOUT_MS` controls the five-minute job timeout.
+For local installs, the first analysis downloads the approximately 78 MB model
+to the PyTorch cache (`TORCH_HOME`). Docker downloads it at build time so
+analysis also works without network access and as a non-root user.
 
 ## Development
 
 The preferred development environment is the Docker container. It includes
-Node.js, pnpm, ffmpeg, Python, and madmom, so the host only needs Docker.
+Node.js, pnpm, ffmpeg, Python, and Beat This!, so the host only needs Docker.
 
 ```sh
 MIMICOPY_UID=$(id -u) \
@@ -138,12 +142,14 @@ product release:
 
 ## Beat And Click Track
 
-In the track editor, paste a YouTube URL into the Click track controls and use
-the refresh button to run madmom beat/downbeat analysis on that separate audio
-source. Once the beat grid is loaded, toggle `Click` to layer synthesized click
-sounds over the current track playback. Downbeats use the accent click. The
-beat/downbeat positions and YouTube reference are saved in SQLite for the open
-track and load automatically the next time that track is opened.
+Each imported MP3 or YouTube track is analyzed automatically in the background
+using Beat This!. Once the grid is ready, toggle `Click` to play synthesized
+clicks with accents on detected downbeats. Use the refresh button to reanalyze
+the current track. Results are saved in SQLite and reloaded when reopening it.
+
+Existing madmom results remain readable and keep their original `source`.
+Refreshing replaces them with Beat This! results (`source: "beat-this"`,
+`model: "final0"`, `postprocessor: "dbn"`); existing tracks are not silently reanalyzed on startup.
 
 ## Verification
 
@@ -152,6 +158,8 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+python3 -m unittest discover -s scripts -p 'test_*.py'
+pnpm e2e
 ```
 
 ## Production Docker Hosting
@@ -165,8 +173,9 @@ The production image includes:
 
 - Node.js 24.18.0
 - system `ffmpeg` at `/usr/bin/ffmpeg`
-- Python 3 with `madmom==0.16.1`
-- pinned madmom prerequisites from `requirements-madmom.txt`
+- Python 3.11 with `beat-this==1.1.0` and CPU-only PyTorch
+- pinned inference dependencies and modern madmom DBN code from `requirements-beat-this.txt`
+- the `final0` model cached under `/opt/beat-this/models`
 
 Build and run locally:
 

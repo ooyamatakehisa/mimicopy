@@ -53,7 +53,7 @@ describe("LibraryStore", () => {
     reopenedStore.close();
   });
 
-  it("persists an automatic beat analysis across store instances", async () => {
+  it.each(["madmom", "beat-this"] as const)("persists %s beat analysis across store instances", async (source) => {
     const paths = await createTempStorage();
     const store = createLibraryStore(paths);
     const track = store.createTrack({
@@ -70,7 +70,9 @@ describe("LibraryStore", () => {
       ],
       beatsPerBar: [4],
       downbeats: [0.25],
-      source: "madmom" as const
+      ...(source === "madmom"
+        ? { source: "madmom" as const }
+        : { source: "beat-this" as const, model: "final0" as const, postprocessor: "dbn" as const })
     };
 
     store.queueMissingBeatAnalyses();

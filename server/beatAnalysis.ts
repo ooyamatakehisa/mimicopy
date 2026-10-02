@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_ANALYSIS_TIMEOUT_MS = 5 * 60 * 1000;
-const MAX_MADMOM_OUTPUT_BYTES = 1024 * 1024;
+const MAX_BEAT_OUTPUT_BYTES = 1024 * 1024;
 
 export type BeatPoint = {
   time: number;
@@ -16,10 +16,12 @@ export type BeatGrid = {
   beats: BeatPoint[];
   beatsPerBar: number[];
   downbeats: number[];
-  source: "madmom";
-};
+} & (
+  | { source: "madmom" }
+  | { source: "beat-this"; model: "final0"; postprocessor: "dbn" }
+);
 
-type MadmomAnalysisOptions = {
+type BeatAnalysisOptions = {
   pythonPath?: string;
   scriptPath?: string;
   timeoutMs?: number;
@@ -35,15 +37,19 @@ function readFiniteNumber(value: unknown) {
 
 function parseBeatsPerBar(value: unknown) {
   if (!Array.isArray(value)) {
-    return [3, 4];
+    throw new Error("Beat This! returned invalid measure lengths.");
   }
 
   const beatsPerBar = value.filter(
     (candidate): candidate is number =>
-      Number.isInteger(candidate) && candidate > 0 && candidate <= 16
+      Number.isSafeInteger(candidate) && candidate > 0
   );
 
-  return beatsPerBar.length > 0 ? beatsPerBar : [3, 4];
+  if (beatsPerBar.length !== value.length) {
+    throw new Error("Beat This! returned invalid measure lengths.");
+  }
+
+  return beatsPerBar;
 }
 
 function parseBeatPoint(value: unknown): BeatPoint | null {
@@ -59,7 +65,7 @@ function parseBeatPoint(value: unknown): BeatPoint | null {
   }
 
   return {
-    isDownbeat: value.isDownbeat === true || Math.round(position) === 1,
+    isDownbeat: value.isDownbeat === true,
     position: Math.max(1, Math.round(position)),
     time
   };
@@ -84,15 +90,21 @@ function getTimeoutMs(timeoutMs: number | undefined) {
     : DEFAULT_ANALYSIS_TIMEOUT_MS;
 }
 
-export function parseMadmomBeatGrid(value: unknown): BeatGrid {
-  if (!isRecord(value) || !Array.isArray(value.beats)) {
-    throw new Error("madmom returned an invalid beat grid.");
+export function parseBeatThisBeatGrid(value: unknown): BeatGrid {
+  if (
+    !isRecord(value) ||
+    value.source !== "beat-this" ||
+    value.model !== "final0" ||
+    value.postprocessor !== "dbn" ||
+    !Array.isArray(value.beats)
+  ) {
+    throw new Error("Beat This! returned an invalid beat grid.");
   }
 
   const beats = value.beats.map(parseBeatPoint);
 
   if (beats.some((beat) => beat === null)) {
-    throw new Error("madmom returned an invalid beat position.");
+    throw new Error("Beat This! returned an invalid beat position.");
   }
 
   const sortedBeats = (beats as BeatPoint[]).sort((left, right) => {
@@ -106,7 +118,9 @@ export function parseMadmomBeatGrid(value: unknown): BeatGrid {
     downbeats: sortedBeats
       .filter((beat) => beat.isDownbeat)
       .map((beat) => beat.time),
-    source: "madmom"
+    source: "beat-this",
+    model: "final0",
+    postprocessor: "dbn"
   };
 }
 
@@ -115,7 +129,9 @@ export function parseStoredBeatGrid(value: unknown): BeatGrid {
     !isRecord(value) ||
     typeof value.analyzedAt !== "string" ||
     value.analyzedAt.length === 0 ||
-    value.source !== "madmom" ||
+    (value.source !== "madmom" && value.source !== "beat-this") ||
+    (value.source === "beat-this" &&
+      (value.model !== "final0" || value.postprocessor !== "dbn")) ||
     !Array.isArray(value.beats) ||
     !Array.isArray(value.beatsPerBar)
   ) {
@@ -125,13 +141,13 @@ export function parseStoredBeatGrid(value: unknown): BeatGrid {
   const beats = value.beats.map(parseBeatPoint);
   const beatsPerBar = value.beatsPerBar.filter(
     (candidate): candidate is number =>
-      Number.isInteger(candidate) && candidate > 0 && candidate <= 16
+      Number.isSafeInteger(candidate) && candidate > 0
   );
 
   if (
     beats.some((beat) => beat === null) ||
     beatsPerBar.length !== value.beatsPerBar.length ||
-    beatsPerBar.length === 0
+    (value.source === "madmom" && beatsPerBar.length === 0)
   ) {
     throw new Error("Stored beat grid is invalid.");
   }
@@ -147,16 +163,22 @@ export function parseStoredBeatGrid(value: unknown): BeatGrid {
     downbeats: sortedBeats
       .filter((beat) => beat.isDownbeat)
       .map((beat) => beat.time),
-    source: "madmom"
+    ...(value.source === "madmom"
+      ? { source: "madmom" as const }
+      : {
+          source: "beat-this" as const,
+          model: "final0" as const,
+          postprocessor: "dbn" as const
+        })
   };
 }
 
-export async function runMadmomBeatAnalysis(
+export async function runBeatThisBeatAnalysis(
   audioPath: string,
-  options: MadmomAnalysisOptions = {}
+  options: BeatAnalysisOptions = {}
 ) {
   const pythonPath =
-    options.pythonPath ?? process.env.MIMICOPY_MADMOM_PYTHON ?? "python3";
+    options.pythonPath ?? process.env.MIMICOPY_BEAT_PYTHON ?? "python3";
   const scriptPath = options.scriptPath ?? getScriptPath();
   const timeoutMs = getTimeoutMs(options.timeoutMs);
   const output = await new Promise<string>((resolve, reject) => {
@@ -177,7 +199,7 @@ export async function runMadmomBeatAnalysis(
 
       settled = true;
       child.kill("SIGTERM");
-      reject(new Error("madmom beat analysis timed out."));
+      reject(new Error("Beat This! beat analysis timed out."));
     }, timeoutMs);
 
     const settle = (error: Error | null, value?: string) => {
@@ -200,9 +222,9 @@ export async function runMadmomBeatAnalysis(
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
 
-      if (stdout.length > MAX_MADMOM_OUTPUT_BYTES) {
+      if (stdout.length > MAX_BEAT_OUTPUT_BYTES) {
         child.kill("SIGTERM");
-        settle(new Error("madmom beat analysis returned too much data."));
+        settle(new Error("Beat This! beat analysis returned too much data."));
       }
     });
 
@@ -214,7 +236,7 @@ export async function runMadmomBeatAnalysis(
     child.on("error", (error) => {
       settle(
         new Error(
-          `Could not start madmom. Install madmom for Python or set MIMICOPY_MADMOM_PYTHON. ${error.message}`
+          `Could not start Beat This! Install requirements-beat-this.txt for Python or set MIMICOPY_BEAT_PYTHON. ${error.message}`
         )
       );
     });
@@ -227,7 +249,7 @@ export async function runMadmomBeatAnalysis(
 
       settle(
         new Error(
-          `madmom beat analysis failed${
+          `Beat This! beat analysis failed${
             signal ? ` with signal ${signal}` : ` with exit code ${code}`
           }. ${stderr.trim()}`
         )
@@ -236,10 +258,10 @@ export async function runMadmomBeatAnalysis(
   });
 
   try {
-    return parseMadmomBeatGrid(JSON.parse(output) as unknown);
+    return parseBeatThisBeatGrid(JSON.parse(output) as unknown);
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error("madmom returned invalid JSON.");
+      throw new Error("Beat This! returned invalid JSON.");
     }
 
     throw error;
