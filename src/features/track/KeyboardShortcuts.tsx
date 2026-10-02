@@ -44,6 +44,16 @@ export function KeyboardShortcuts({
         return;
       }
 
+      // Enter activates a focused control (including marker deletion).
+      // On the rest of the editor it remains a playback shortcut.
+      if (
+        event.key === "Enter" &&
+        event.target instanceof HTMLElement &&
+        event.target.closest("button, a[href]")
+      ) {
+        return;
+      }
+
       const command = getShortcutCommand(event);
 
       if (!command) {

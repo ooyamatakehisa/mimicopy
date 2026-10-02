@@ -50,7 +50,9 @@ function createCompletedBeatAnalysis() {
       ],
       beatsPerBar: [4],
       downbeats: [0.25],
-      source: "madmom"
+      source: "beat-this",
+      model: "final0",
+      postprocessor: "dbn"
     },
     createdAt: now,
     error: null,
@@ -341,10 +343,14 @@ test("loads audio and supports the main playback and marker workflow", async ({
     .toBeGreaterThan(0.9);
 
   await page.getByTitle("速度を下げる").focus();
-  await page.keyboard.press("Shift+Comma");
-  await expect(page.getByLabel("Playback speed")).toContainText("0.75x");
-  await page.keyboard.press("Shift+Period");
-  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  for (const speed of ["0.75x", "0.5x", "0.25x"]) {
+    await page.keyboard.press("Shift+Comma");
+    await expect(page.getByLabel("Playback speed")).toContainText(speed);
+  }
+  for (const speed of ["0.5x", "0.75x", "1x"]) {
+    await page.keyboard.press("Shift+Period");
+    await expect(page.getByLabel("Playback speed")).toContainText(speed);
+  }
 
   await page.getByTitle("半音上げる").click();
   await expect(page.getByLabel("Transpose")).toContainText("+1");
@@ -382,6 +388,18 @@ test("loads audio and supports the main playback and marker workflow", async ({
     )
     .toBeLessThan(0.1);
   await page.getByTitle("マーカー削除").click();
+  await expect(page.getByText("No markers")).toBeVisible();
+
+  await page.getByTitle("再生").focus();
+  await page.keyboard.press("KeyM");
+  await expect(page.getByLabel("Marker 1 label")).toHaveValue("Marker 1");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => page.locator("audio").first().evaluate(
+    (audio) => (audio as HTMLAudioElement).currentTime
+  )).toBeLessThan(0.1);
+  await page.getByTitle("マーカー削除").focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByText("No markers")).toBeVisible();
 
   expect(trackId).toBeTruthy();

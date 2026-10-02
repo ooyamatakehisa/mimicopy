@@ -9,8 +9,10 @@ export type BeatGrid = {
   beats: BeatPoint[];
   beatsPerBar: number[];
   downbeats: number[];
-  source: "madmom";
-};
+} & (
+  | { source: "madmom" }
+  | { source: "beat-this"; model: "final0"; postprocessor: "dbn" }
+);
 
 export type BeatAnalysisStatus =
   | "queued"
@@ -66,10 +68,10 @@ function parseBeatsPerBar(value: unknown) {
 
   const beatsPerBar = value.filter(
     (candidate): candidate is number =>
-      Number.isInteger(candidate) && candidate > 0
+      Number.isSafeInteger(candidate) && candidate > 0
   );
 
-  return beatsPerBar.length > 0 ? beatsPerBar : null;
+  return beatsPerBar.length === value.length ? beatsPerBar : null;
 }
 
 export function parseBeatGrid(value: unknown): BeatGrid | null {
@@ -81,7 +83,14 @@ export function parseBeatGrid(value: unknown): BeatGrid | null {
   const source = readString(value, "source");
   const beatsPerBar = parseBeatsPerBar(value.beatsPerBar);
 
-  if (!analyzedAt || source !== "madmom" || !beatsPerBar) {
+  if (
+    !analyzedAt ||
+    (source !== "madmom" && source !== "beat-this") ||
+    (source === "beat-this" &&
+      (value.model !== "final0" || value.postprocessor !== "dbn")) ||
+    !beatsPerBar ||
+    (source === "madmom" && beatsPerBar.length === 0)
+  ) {
     return null;
   }
 
@@ -106,7 +115,13 @@ export function parseBeatGrid(value: unknown): BeatGrid | null {
     beats,
     beatsPerBar,
     downbeats,
-    source
+    ...(source === "madmom"
+      ? { source: "madmom" as const }
+      : {
+          source: "beat-this" as const,
+          model: "final0" as const,
+          postprocessor: "dbn" as const
+        })
   };
 }
 

@@ -1,25 +1,29 @@
-FROM node:24.18.0-bullseye-slim AS runtime-base
+FROM node:24.18.0-bookworm-slim AS runtime-base
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     FFMPEG_PATH=/usr/bin/ffmpeg \
-    MIMICOPY_MADMOM_PYTHON=/usr/bin/python3
+    MIMICOPY_BEAT_PYTHON=/opt/beat-this/bin/python \
+    TORCH_HOME=/opt/beat-this/models
 WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
+    git \
     ffmpeg \
+    libsndfile1 \
     python3 \
     python3-dev \
-    python3-pip \
+    python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-madmom.txt ./
-RUN python3 -m pip install --no-cache-dir --upgrade "pip<26" "setuptools<75" wheel \
-  && python3 -m pip install --no-cache-dir -r requirements-madmom.txt \
-  && python3 -m pip install --no-cache-dir --no-build-isolation madmom==0.16.1 \
-  && python3 -c "from madmom.features.downbeats import DBNDownBeatTrackingProcessor, RNNDownBeatProcessor; print('madmom ready')" \
-  && apt-get purge -y --auto-remove build-essential python3-dev
+COPY requirements-beat-this.txt ./
+RUN python3 -m venv /opt/beat-this \
+  && /opt/beat-this/bin/pip install --no-cache-dir -r requirements-beat-this.txt \
+  && /opt/beat-this/bin/python -c "from beat_this.inference import File2Beats; File2Beats(checkpoint_path='final0', device='cpu', dbn=True)" \
+  && chmod -R a+rX /opt/beat-this/models \
+  && apt-get purge -y --auto-remove build-essential git python3-dev
 
 FROM runtime-base AS dev
 

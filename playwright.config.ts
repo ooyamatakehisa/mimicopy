@@ -25,7 +25,7 @@ export default defineConfig({
         command: `rm -rf .playwright-storage && PORT=${apiPort} MIMICOPY_API_PORT=${apiPort} MIMICOPY_CLIENT_PORT=${clientPort} MIMICOPY_STORAGE_DIR=.playwright-storage pnpm dev`,
         reuseExistingServer: false,
         timeout: 30_000,
-        url: baseURL
+        url: `${baseURL}/api/health`
       },
   workers: 1,
   projects: [

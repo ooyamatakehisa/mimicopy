@@ -22,13 +22,15 @@ describe("parseTrackBeatAnalysisResponse", () => {
     });
   });
 
-  it("requires a valid beat grid when analysis is completed", () => {
+  it.each(["madmom", "beat-this"])("requires a valid %s grid when analysis is completed", (source) => {
     const beatGrid = {
       analyzedAt: timestamp,
       beats: [{ isDownbeat: true, position: 1, time: 0.5 }],
       beatsPerBar: [4],
       downbeats: [0.5],
-      source: "madmom"
+      ...(source === "madmom"
+        ? { source: "madmom" as const }
+        : { source: "beat-this" as const, model: "final0" as const, postprocessor: "dbn" as const })
     };
 
     expect(
@@ -50,4 +52,20 @@ describe("parseTrackBeatAnalysisResponse", () => {
       })
     ).toThrow("拍解析結果の形式が壊れています。");
   });
+});
+
+
+it("accepts Beat This! without a known meter and preserves unaccented beats", () => {
+  const beatGrid = {
+    analyzedAt: timestamp,
+    beats: [{ time: 0.5, position: 2, isDownbeat: false }],
+    beatsPerBar: [],
+    downbeats: [],
+    source: "beat-this",
+    model: "final0",
+    postprocessor: "dbn"
+  };
+  expect(parseTrackBeatAnalysisResponse({
+    beatGrid, createdAt: timestamp, updatedAt: timestamp, error: null, status: "completed"
+  }).beatGrid).toEqual(beatGrid);
 });

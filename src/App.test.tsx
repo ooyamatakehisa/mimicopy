@@ -65,7 +65,9 @@ function createBeatAnalysis(): TrackBeatAnalysis {
       ],
       beatsPerBar: [4],
       downbeats: [0.5],
-      source: "madmom"
+      source: "beat-this",
+      model: "final0",
+      postprocessor: "dbn"
     },
     createdAt: baseTimestamp,
     error: null,

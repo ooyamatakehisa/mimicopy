@@ -10,7 +10,7 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
-  runMadmomBeatAnalysis,
+  runBeatThisBeatAnalysis,
   type BeatGrid
 } from "./beatAnalysis.js";
 import { installGlobalHttpDispatcher } from "./httpDispatcher.js";
@@ -479,7 +479,7 @@ export function createApp(options: CreateAppOptions = {}) {
     path.resolve(process.cwd(), "storage");
   const paths = getStoragePaths(storageDir);
   const store = createLibraryStore(paths);
-  const analyzeBeats = options.analyzeBeats ?? runMadmomBeatAnalysis;
+  const analyzeBeats = options.analyzeBeats ?? runBeatThisBeatAnalysis;
   const convertYoutubeAudio =
     options.convertYoutubeAudio ?? convertYoutubeToMp3;
   const separateAudio =

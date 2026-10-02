@@ -47,12 +47,30 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test beat grid conversion
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Build
         run: pnpm build
 
+  beat-analysis:
+    name: Beat This! and DBN smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build -t mimicopy-beat-test .
+
+      - name: Run real inference offline as the runtime user
+        run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp
+          mimicopy-beat-test /opt/beat-this/bin/python scripts/smoke_beat_analysis.py
+
   image:
     name: Publish Docker Image
-    needs: verify
+    needs: [verify, beat-analysis]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
