@@ -20,6 +20,7 @@ Find the Mimicopy repository containing `e2e/audioAuditRun.ts` and run commands 
 The runner calibrates the probe, starts isolated servers, waits for readiness, runs browsers sequentially, closes its servers, and retains reports/logs under a unique `audio-audit.local/<timestamp>/` directory. Use `--output=...` only with an empty directory. Do not run competing audio audits or heavy builds during signal capture.
 
 Read [protocol.md](references/protocol.md) for coverage, iOS operation, output interpretation, exit codes and limitations. Read [known-findings.md](references/known-findings.md) when diagnosing the original failures or choosing a repair experiment.
+The dated [verification snapshot](references/verification-2026-10-02.md) records completed evidence and outstanding native checks; it is not a substitute for a fresh run after relevant changes.
 
 ## Interpret and verify
 
