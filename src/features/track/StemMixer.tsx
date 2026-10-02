@@ -19,6 +19,9 @@ import type { StemMixerState } from "./useStemMixer";
 
 type StemMixerProps = {
   mixer: StemMixerState;
+  mixerReady: boolean;
+  preparationMessage: string | null;
+  preparationFailed: boolean;
   originalMediaUrl: string;
   separation: TrackSeparation;
   trackTitle: string;
@@ -26,6 +29,9 @@ type StemMixerProps = {
 
 export function StemMixer({
   mixer,
+  mixerReady,
+  preparationMessage,
+  preparationFailed,
   originalMediaUrl,
   separation,
   trackTitle
@@ -77,7 +83,7 @@ export function StemMixer({
                 }
               : null
           }
-          disabled={!stemReady}
+          disabled={!stemReady || !mixerReady}
           label={stemLabels[separation.targetStem]}
           mixer={mixer}
         />
@@ -95,11 +101,17 @@ export function StemMixer({
                 }
               : null
           }
-          disabled={!remainderReady}
+          disabled={!remainderReady || !mixerReady}
           label={`${stemLabels[separation.targetStem]}以外`}
           mixer={mixer}
         />
       </div>
+      {preparationMessage ? (
+        <p role={preparationFailed ? "alert" : "status"}
+          className={cn("px-1 text-sm", preparationFailed ? "text-danger" : "text-muted")}>
+          {preparationMessage}
+        </p>
+      ) : null}
       {separation.status === "failed" ? (
         <p className="px-1 text-sm text-danger">
           {separation.error ?? "音源分離に失敗しました。"}

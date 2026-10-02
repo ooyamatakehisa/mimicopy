@@ -14,6 +14,7 @@ import {
   type BeatGrid
 } from "./beatAnalysis.js";
 import { installGlobalHttpDispatcher } from "./httpDispatcher.js";
+import { createMixerMediaService, MixerMediaError } from "./mixerMedia.js";
 import {
   createLibraryStore,
   type LibraryBeatAnalysis,
@@ -479,6 +480,7 @@ export function createApp(options: CreateAppOptions = {}) {
     path.resolve(process.cwd(), "storage");
   const paths = getStoragePaths(storageDir);
   const store = createLibraryStore(paths);
+  const mixerMedia = createMixerMediaService({ store });
   const analyzeBeats = options.analyzeBeats ?? runBeatThisBeatAnalysis;
   const convertYoutubeAudio =
     options.convertYoutubeAudio ?? convertYoutubeToMp3;
@@ -644,6 +646,21 @@ export function createApp(options: CreateAppOptions = {}) {
     "/api/tracks",
     (_request: Request, response: Response<TrackListResponseBody>) => {
       response.json({ tracks: store.listTracks() });
+    }
+  );
+
+  app.get(
+    "/api/tracks/:trackId/mixer",
+    async (request: Request<{ trackId: string }>, response: Response<{ mediaUrl: string } | { error: string }>) => {
+      try {
+        response.json(await mixerMedia.get(getTrackId(request)));
+      } catch (error) {
+        if (error instanceof MixerMediaError) {
+          response.status(error.status).json({ error: error.message });
+          return;
+        }
+        sendError(response, error, "Could not prepare synchronized audio.");
+      }
     }
   );
 
@@ -846,12 +863,15 @@ export function createApp(options: CreateAppOptions = {}) {
       response: Response<TrackDeleteResponseBody>
     ) => {
       try {
-        const deletedMedia = store.deleteTrack(getTrackId(request));
+        const trackId = getTrackId(request);
+        const deletedMedia = store.deleteTrack(trackId);
 
         if (!deletedMedia) {
           response.status(404).json({ error: "Track was not found." });
           return;
         }
+
+        await mixerMedia.remove(trackId);
 
         await rm(path.join(paths.mediaDir, deletedMedia.mediaFilename), {
           force: true
