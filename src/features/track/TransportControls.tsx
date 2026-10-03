@@ -78,9 +78,9 @@ export function TransportControls({
   return (
     <Surface
       as="footer"
-      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:order-1 max-lg:flex-col max-lg:items-stretch"
+      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:order-1 max-lg:flex-col max-lg:items-stretch max-sm:gap-2 max-sm:px-3"
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 max-sm:grid max-sm:grid-cols-3 max-sm:[&>button]:min-w-0 max-sm:[&>button]:px-2">
         <Button
           size="transport"
           variant="primary"
@@ -91,7 +91,7 @@ export function TransportControls({
           {playback.isPlaying || playback.isPlayPending ? <Pause size={21} /> : <Play size={21} />}
           <span>{playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}</span>
         </Button>
-        {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="text-xs text-muted">再生位置を準備しています。</span> : null}
+        {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="text-xs text-muted max-sm:order-last max-sm:col-span-3">再生位置を準備しています。</span> : null}
         <Button
           size="transport"
           title="5秒戻る"
@@ -160,7 +160,7 @@ export function TransportControls({
           {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
           <span>Click</span>
         </Button>
-        <strong className="min-w-40 flex-1 truncate text-center text-xs font-semibold text-muted">
+        <strong className="min-w-0 flex-1 truncate text-center text-xs font-semibold text-muted">
           {isLoadingBeatGrid ? "Loading analysis..." : beatStatus}
         </strong>
       </div>

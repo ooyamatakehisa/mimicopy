@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StatusBadge } from "../../components/ui/StatusBadge";
 import type { BeatGrid } from "../../lib/beats";
 import { cn } from "../../lib/cn";
-import type { LoadState } from "../../lib/loadState";
 import type { Marker } from "../../lib/markers";
 import { clampTime, formatTime } from "../../lib/playback";
 import {
@@ -14,12 +12,12 @@ import {
 } from "../../lib/waveform";
 import type { DynamicStyle } from "./types";
 import { useWaveformZoomGestures } from "./useWaveformZoomGestures";
+import { useWaveformSeekGesture } from "./useWaveformSeekGesture";
 
 type WaveformPanelProps = {
   beatGrid: BeatGrid | null;
   currentTime: number;
   duration: number;
-  loadState: LoadState;
   message: string | null;
   moveMarkerTo: (markerId: string, time: number) => void;
   peaks: WaveformPeak[];
@@ -90,7 +88,6 @@ export function WaveformPanel({
   beatGrid,
   currentTime,
   duration,
-  loadState,
   message,
   moveMarkerTo,
   peaks,
@@ -126,14 +123,14 @@ export function WaveformPanel({
     "--playhead-left": `${playheadPercent}%`
   };
 
-  const handleWaveformPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+  const seekFromPointer = useCallback(
+    (clientX: number) => {
       if (!duration) {
         return;
       }
 
       const bounds = getWaveformInteractionBounds(
-        event.currentTarget,
+        waveformRef.current,
         canvasRef.current
       );
 
@@ -141,12 +138,14 @@ export function WaveformPanel({
         return;
       }
 
-      const ratio = clampTime((event.clientX - bounds.left) / bounds.width, 1);
+      const ratio = clampTime((clientX - bounds.left) / bounds.width, 1);
 
       seekTo(waveformPercentToTime(ratio, waveformRange, duration));
     },
     [duration, seekTo, waveformRange]
   );
+
+  useWaveformSeekGesture({ onSeek: seekFromPointer, targetRef: waveformRef });
 
   const moveMarkerFromPointer = useCallback(
     (markerId: string, clientX: number) => {
@@ -317,35 +316,21 @@ export function WaveformPanel({
 
   return (
     <section
-      className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04]"
+      className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04]"
       aria-label="Waveform"
     >
-      <div
-        className={cn(
-          "mx-3 mt-3 grid min-h-14 items-center gap-3 rounded-full border border-white/8 bg-black/18 px-3 text-sm text-muted max-sm:grid-cols-1 max-sm:items-start max-sm:rounded-3xl max-sm:px-3 max-sm:py-3",
-          message
-            ? "grid-cols-[auto_minmax(0,1fr)_auto]"
-            : "grid-cols-[auto_minmax(0,1fr)]"
-        )}
-      >
-        <StatusBadge state={loadState}>{loadState}</StatusBadge>
-        {message ? <span className="min-w-0 truncate">{message}</span> : null}
-        <span className="justify-self-end whitespace-nowrap font-bold tabular-nums text-ink max-sm:justify-self-start">
-          {formatTime(currentTime)} / {formatTime(duration)}
-        </span>
-      </div>
+      {message ? <p role="alert" className="mx-4 mt-3 text-sm text-danger">{message}</p> : null}
 
       <div
         ref={waveformRef}
-        className="waveformSurface relative m-3 h-[clamp(320px,48vh,580px)] min-h-0 cursor-crosshair overflow-hidden rounded-[1.75rem] border border-white/8 bg-[radial-gradient(circle_at_15%_10%,rgba(67,224,202,0.16),transparent_24%),radial-gradient(circle_at_85%_90%,rgba(255,138,101,0.12),transparent_25%),linear-gradient(rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(180deg,#111816_0%,#070908_100%)] bg-[length:auto,auto,100%_25%,84px_100%,auto] outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[1.75rem] after:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%,rgba(0,0,0,0.18))] focus-visible:shadow-[inset_0_0_0_2px_rgba(122,167,255,0.72)] max-sm:h-[clamp(240px,42vh,380px)]"
+        className="waveformSurface relative m-3 h-[clamp(120px,22svh,180px)] min-h-0 shrink-0 cursor-crosshair overflow-hidden rounded-[1.75rem] border border-white/8 bg-[radial-gradient(circle_at_15%_10%,rgba(67,224,202,0.16),transparent_24%),radial-gradient(circle_at_85%_90%,rgba(255,138,101,0.12),transparent_25%),linear-gradient(rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(180deg,#111816_0%,#070908_100%)] bg-[length:auto,auto,100%_25%,84px_100%,auto] outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[1.75rem] after:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%,rgba(0,0,0,0.18))] focus-visible:shadow-[inset_0_0_0_2px_rgba(122,167,255,0.72)] sm:h-[clamp(160px,28svh,260px)] lg:h-[clamp(320px,48vh,580px)]"
         role="slider"
         aria-label="再生位置"
         aria-valuemin={0}
         aria-valuemax={Math.max(0, Math.floor(duration))}
         aria-valuenow={Math.floor(currentTime)}
-        title="クリックでシーク・ピンチで波形をズーム"
+        title="タップでシーク・ピンチで波形をズーム"
         tabIndex={0}
-        onPointerDown={handleWaveformPointerDown}
       >
         <canvas ref={canvasRef} className="block size-full" />
         {visibleMarkers.map((marker) => (

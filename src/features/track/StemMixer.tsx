@@ -1,5 +1,7 @@
+import { useId, useState } from "react";
 import {
   AudioLines,
+  ChevronDown,
   Download,
   LoaderCircle,
   Volume2,
@@ -36,6 +38,8 @@ export function StemMixer({
   separation,
   trackTitle
 }: StemMixerProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const channelsId = useId();
   const stemReady =
     separation.status === "completed" && Boolean(separation.mediaUrl);
   const remainderReady =
@@ -45,16 +49,27 @@ export function StemMixer({
   return (
     <section
       aria-label="Audio mixer"
-      className="mx-4 mt-4 grid gap-3 rounded-[1.75rem] border border-white/8 bg-black/15 p-3"
+      className="mx-4 mt-4 grid gap-3 rounded-[1.75rem] border border-white/8 bg-black/15 p-3 max-lg:order-2 max-lg:m-0 max-lg:gap-0"
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-1">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="hidden min-w-0 items-center gap-2 lg:flex">
           <AudioLines className="shrink-0 text-teal" size={18} />
           <strong className="truncate text-sm text-ink">Audio mixer</strong>
         </div>
+        <button
+          type="button"
+          aria-controls={channelsId}
+          aria-expanded={isExpanded}
+          className="flex min-h-11 flex-1 items-center gap-2 rounded-xl text-left text-sm font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue lg:hidden"
+          onClick={() => setIsExpanded((expanded) => !expanded)}
+        >
+          <AudioLines aria-hidden="true" className="text-teal" size={18} />
+          Audio mixer
+          <ChevronDown aria-hidden="true" size={18} className={cn("ml-auto", isExpanded && "rotate-180")} />
+        </button>
         <SeparationStatus separation={separation} />
       </div>
-      <div className="grid grid-cols-3 gap-3 max-lg:grid-cols-1">
+      <div id={channelsId} className={cn("grid-cols-3 gap-3 lg:grid max-lg:grid-cols-1 max-lg:pt-2", isExpanded ? "grid" : "hidden")}>
         <MixerChannel
           channelId="original"
           download={{
@@ -177,13 +192,9 @@ function SeparationStatus({
     );
   }
 
-  return (
-    <StatusBadge
-      state={separation.status === "completed" ? "ready" : "error"}
-    >
-      {separation.status}
-    </StatusBadge>
-  );
+  return separation.status === "failed" ? (
+    <StatusBadge state="error">分離失敗</StatusBadge>
+  ) : null;
 }
 
 function MixerChannel({
@@ -205,7 +216,7 @@ function MixerChannel({
   return (
     <div
       className={cn(
-        "grid min-w-0 grid-cols-[minmax(80px,1fr)_auto_auto_auto_minmax(100px,1.4fr)] items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.045] p-2 max-sm:grid-cols-[minmax(80px,1fr)_auto_auto_auto]",
+        "grid min-w-0 grid-cols-[minmax(80px,1fr)_auto_auto_auto_minmax(100px,1.4fr)] items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.045] p-2 max-sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]",
         disabled && "opacity-50"
       )}
       aria-label={`${label} channel`}
@@ -216,7 +227,7 @@ function MixerChannel({
       {download ? (
         <a
           aria-label={`${label}をダウンロード`}
-          className={cn(buttonVariants({ size: "sm" }), "size-9 px-0")}
+          className={cn(buttonVariants({ size: "sm" }), "size-9 px-0 max-lg:size-11")}
           download={download.filename}
           href={download.mediaUrl}
           title={`${label}をダウンロード`}
@@ -226,7 +237,7 @@ function MixerChannel({
       ) : (
         <Button
           aria-label={`${label}は分離完了後にダウンロードできます`}
-          className="size-9 px-0"
+          className="size-9 px-0 max-lg:size-11"
           disabled
           size="sm"
           title={`${label}は分離完了後にダウンロードできます`}
@@ -236,7 +247,7 @@ function MixerChannel({
       )}
       <Button
         aria-pressed={channel.muted}
-        className="min-w-16"
+        className="min-w-16 max-lg:h-11"
         disabled={disabled}
         size="sm"
         title={`${label}をミュート`}
@@ -248,7 +259,7 @@ function MixerChannel({
       </Button>
       <Button
         aria-pressed={channel.solo}
-        className="min-w-14"
+        className="min-w-14 max-lg:h-11"
         disabled={disabled}
         size="sm"
         title={`${label}をソロ`}
@@ -261,7 +272,7 @@ function MixerChannel({
         <span className="sr-only">{label}の音量</span>
         <input
           aria-label={`${label}の音量`}
-          className="min-w-0 flex-1 accent-teal"
+          className="min-w-0 flex-1 accent-teal max-lg:h-11"
           disabled={disabled}
           max="100"
           min="0"
