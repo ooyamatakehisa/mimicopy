@@ -114,7 +114,7 @@ async function expectWaveformCanvas(page: Page) {
 
 async function expectInitialPlaybackPosition(page: Page) {
   await expect(page.getByLabel("再生位置")).toHaveAttribute("aria-valuenow", "0");
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
+  await expect(page.getByLabel("Audio editor", { exact: true })).toContainText(
     "0:00 /"
   );
 
@@ -154,7 +154,7 @@ async function expectInitialPlaybackPosition(page: Page) {
   expect(playheadLeft.computedLeft).toBe(0);
 }
 
-async function mockYoutubeConversion(page: Page) {
+async function mockYoutubeConversion(page: Page, title = "Mock YouTube Track") {
   let hasConvertedTrack = false;
   const now = new Date().toISOString();
   const track = {
@@ -176,7 +176,7 @@ async function mockYoutubeConversion(page: Page) {
       updatedAt: now
     },
     sourceType: "youtube",
-    title: "Mock YouTube Track",
+    title,
     updatedAt: now
   };
   const trackSummary = {
@@ -312,9 +312,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   });
 
   await expect(page).toHaveURL(/\/tracks\/[^/]+$/);
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "ready"
-  );
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await expect(page.getByText("e2e-tone.mp3 を読み込みました。")).toHaveCount(0);
   const editor = page.getByLabel("Audio editor");
   await editor.getByTitle("表示名を編集").click();
@@ -411,9 +409,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
 
   await page.getByTitle("半音上げる").click();
   await expect(page.getByLabel("Transpose")).toContainText("+1");
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "ready"
-  );
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await page
     .locator('audio[aria-label="Original audio"]')
     .evaluate((audio) => {
@@ -428,9 +424,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
     )
     .toBeGreaterThan(0.1);
   await page.getByTitle("停止").click();
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "ready"
-  );
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await page.getByTitle("半音下げる").click();
   await expect(page.getByLabel("Transpose")).toContainText("0");
 
@@ -494,9 +488,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await page.getByTitle("YouTubeを変換").click();
 
   await expect(page).toHaveURL("/tracks/e2e-youtube-track");
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "ready"
-  );
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await expect(page.getByText("Mock YouTube Track を読み込みました。")).toHaveCount(0);
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expectWaveformCanvas(page);
@@ -712,10 +704,7 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
   await page.getByTitle("YouTubeを変換").click();
 
   await expect(page).toHaveURL(/\/tracks\/[^/]+$/, { timeout: 90_000 });
-  await expect(page.getByLabel("Waveform", { exact: true })).toContainText(
-    "ready",
-    { timeout: 30_000 }
-  );
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled({ timeout: 30_000 });
   await expect(page.getByLabel("Playback speed")).toContainText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
@@ -742,4 +731,121 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
   page.once("dialog", (dialog) => dialog.accept());
   await library.getByTitle("保存済みMP3を削除").click();
   await expect(library.getByText("最初の1曲を読み込もう")).toBeVisible();
+});
+
+
+test.describe("mobile track editor", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test("keeps playback above the fold and discloses mixer controls", async ({ page }, testInfo) => {
+    await mockYoutubeConversion(page, "Evening guitar practice — とても長い曲名でも再生操作にすぐアクセスできるモバイル表示");
+    await page.goto("/tracks/e2e-youtube-track");
+    const play = page.getByTitle("再生", { exact: true });
+    const waveform = page.getByRole("slider", { name: "再生位置" });
+    const mixer = page.getByLabel("Audio mixer", { exact: true });
+    const toggle = mixer.getByRole("button", { name: "Audio mixer", exact: true });
+    await expect(play).toBeEnabled();
+    await expectWaveformCanvas(page);
+    await expect(page.getByLabel("Waveform", { exact: true })).not.toContainText("ready");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(mixer.getByTitle("原音をミュート")).toBeHidden();
+
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport);
+      const waveBounds = await waveform.boundingBox();
+      const playBounds = await play.boundingBox();
+      const mixerBounds = await mixer.boundingBox();
+      if (!waveBounds || !playBounds || !mixerBounds) throw new Error("Missing mobile controls");
+      expect(waveBounds.height).toBeLessThanOrEqual(viewport.width < 640 ? 180 : 260);
+      if (viewport.height > viewport.width) expect(playBounds.y + playBounds.height).toBeLessThan(viewport.height);
+      expect(playBounds.y).toBeLessThan(mixerBounds.y);
+      expect(mixerBounds.height).toBeLessThan(80);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    for (const channel of ["原音", "ギター", "ギター以外"]) {
+      const mute = mixer.getByTitle(`${channel}をミュート`);
+      await expect(mute).toBeEnabled();
+      const bounds = await mute.boundingBox();
+      expect(bounds?.height).toBeGreaterThanOrEqual(44);
+      await mute.tap();
+      await expect(mute).toHaveAttribute("aria-pressed", "true");
+      await mute.tap();
+      await expect(mute).toHaveAttribute("aria-pressed", "false");
+      await expect(mixer.getByRole("link", { name: `${channel}をダウンロード` })).toBeVisible();
+    }
+    await page.setViewportSize({ width: 320, height: 568 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mixer.getByLabel("原音の音量").fill("40");
+    await toggle.tap();
+    await toggle.tap();
+    await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("mobile.png"), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(toggle).toBeHidden();
+    await expect(mixer.getByTitle("原音をミュート")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("desktop.png"), fullPage: true });
+  });
+
+  test("seeks on a short tap but leaves scrolling, holds and pinches alone", async ({ page, context }) => {
+    await mockYoutubeConversion(page);
+    await page.goto("/tracks/e2e-youtube-track");
+    await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+    const waveform = page.getByRole("slider", { name: "再生位置" });
+    const bounds = await waveform.boundingBox();
+    if (!bounds) throw new Error("Missing waveform");
+    const x = bounds.x + bounds.width * 0.27;
+    const y = bounds.y + bounds.height * 0.5;
+    await page.touchscreen.tap(x, y);
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    const client = await context.newCDPSession(page);
+    const start = async (points = [{ x: x + 80, y }]) => client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: points });
+    const end = async () => client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+    await start();
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    await page.waitForTimeout(400);
+    await end();
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+
+    // A native browser touch swipe must scroll the document without seeking.
+    await start();
+    for (const distance of [20, 40, 60, 80, 100]) {
+      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + 80, y: y - distance }] });
+    }
+    await end();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(30);
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    await page.evaluate(() => window.scrollTo(0, 0));
+
+    // Browser cancellation and multi-touch cannot become seek gestures.
+    await start();
+    await client.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    await start([{ x, y }, { x: x + 80, y }]);
+    await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 10, y }, { x: x + 90, y }] });
+    await end();
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+
+    // A drag that returns to its origin is not a tap, including mouse input.
+    await page.mouse.move(x + 60, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 90, y);
+    await page.mouse.move(x + 60, y);
+    await page.mouse.up();
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    await page.mouse.click(x + 60, y, { button: "right" });
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+    await page.mouse.click(x + 60, y);
+    await expect(waveform).not.toHaveAttribute("aria-valuenow", "5");
+    await page.touchscreen.tap(x, y);
+    await expect(waveform).toHaveAttribute("aria-valuenow", "5");
+  });
 });

@@ -265,7 +265,6 @@ function TrackEditor({
     clickTrack.clickErrorMessage ??
     pitchShift.pitchShiftErrorMessage ??
     playback.durationErrorMessage;
-  const loadState = errorMessage ? "error" : "ready";
   const titleMessage = titleMutation.isPending
     ? `${titleMutation.variables?.title.trim() ?? track.title} を保存しています。`
     : titleMutation.isError
@@ -323,7 +322,7 @@ function TrackEditor({
           title={track.title}
           description={description}
           action={
-            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
               <TrackTitleActions
                 title={track.title}
                 isSaving={titleMutation.isPending}
@@ -362,7 +361,6 @@ function TrackEditor({
               beatGrid={beatGrid}
               currentTime={playback.currentTime}
               duration={playback.duration}
-              loadState={loadState}
               message={errorMessage}
               moveMarkerTo={(markerId, time) =>
                 markers.moveMarkerTo(markerId, time, playback.duration)

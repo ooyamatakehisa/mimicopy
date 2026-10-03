@@ -36,14 +36,14 @@ export function AppHeader({
         title="ライブラリへ"
         onClick={onNavigateHome}
       >
-        <span className="grid size-11 place-items-center rounded-full border border-teal/30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.38),transparent_30%),linear-gradient(135deg,rgba(67,224,202,0.95),rgba(122,167,255,0.72))] text-base font-black text-[#061210] shadow-[0_14px_36px_rgba(67,224,202,0.2)]">
+        <span className="grid size-11 shrink-0 place-items-center rounded-full border border-teal/30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.38),transparent_30%),linear-gradient(135deg,rgba(67,224,202,0.95),rgba(122,167,255,0.72))] text-base font-black text-[#061210] shadow-[0_14px_36px_rgba(67,224,202,0.2)]">
           M
         </span>
         <span className="grid min-w-0 gap-1">
           <h1 className="m-0 text-xl font-semibold leading-none text-ink">
             Mimicopy
           </h1>
-          <span className="truncate text-sm text-muted max-sm:whitespace-normal">
+          <span className={cn("truncate text-sm text-muted", !mobileActionsInline && "max-sm:whitespace-normal")}>
             {subtitle}
           </span>
         </span>
