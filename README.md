@@ -162,6 +162,82 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 pnpm e2e
 ```
 
+### Real audio mixer regression
+
+Use `$mimicopy-audio-regression` for the repeatable real-audio workflow. The
+versioned [skill](.agents/skills/mimicopy-audio-regression/SKILL.md) links the
+[coverage and iOS protocol](.agents/skills/mimicopy-audio-regression/references/protocol.md)
+and [initial causes and repair investigation](.agents/skills/mimicopy-audio-regression/references/known-findings.md).
+
+```sh
+# One-time setup if the browser binaries are missing:
+pnpm exec playwright install chromium webkit
+# Verify the regression checker, then run a short real-audio smoke test:
+pnpm audio:audit:selftest
+pnpm audio:audit --quick
+# Full sequential Chromium + WebKit matrix and MP3/keyboard/edge scenarios:
+pnpm audio:audit
+# Compare matching suites with earlier evidence:
+pnpm audio:audit --baseline=/absolute/path/to/previous-run
+# Re-evaluate recorded evidence without replaying audio:
+pnpm audio:audit:check /absolute/path/to/run
+```
+
+The runner starts and closes isolated fixture servers and never opens the saved
+library. It saves raw measurements, logs, `index.html`, `run-summary.json`, and
+`gate-summary.json` under a new ignored `audio-audit.local/<timestamp>/` directory,
+which survives normal E2E cleanup. Options include `--engine=chromium|webkit|all`,
+`--port=8197`, and `--output=/absolute/path/to/empty-directory`.
+
+Exit 0 means the captured scope passed; exit 1 means confirmed failures; exit 2
+means incomplete or inconclusive checks, possibly alongside confirmed failures.
+A known-failing baseline does not waive defects. Edge scenarios remain diagnostic
+and require review. A smoke check or desktop WebKit run does not establish iOS
+correctness. Native Simulator Safari, touch, and background-return instructions
+are in the protocol. Full v2 coverage includes 852 main captures and 105
+supplementary captures per environment, including ±6 semitone transposition.
+
+The suite uses real media playback and source/final-mix signal measurements;
+physical speakers and Bluetooth are not measured. If a fix changes the audio
+graph (especially adding channel GainNodes), verify probe tap placement and
+recalibrate before comparing results. Standalone server/calibration/report tools
+accept `MIMICOPY_AUDIO_AUDIT_OUTPUT`; their manual-run default is
+`audio-audit.local/manual`. Use unique iOS run IDs to retain earlier evidence.
+
+### Synchronized mixer playback
+
+Completed separated tracks use one streamed PCM16/48 kHz WAV containing three
+stereo pairs: original, guitar and remainder. Web Audio splits the pairs and
+applies independent channel gains. Mute and solo never seek or restart an
+individual source. Native playback uses varispeed with pitch preservation
+disabled; the shared Signalsmith Stretch worklet compensates the pitch and
+applies the requested transposition. This avoids the measured WebKit/iOS
+native pitch-preservation dropouts at slow speeds.
+
+The processor adds 120 ms of latency. The displayed cursor, pause/resume
+position and click-track timing account for that delay. Seeking, resuming and
+changing speed prepare the native decoder and reset the processor behind a
+closed output gate, then resume the latest playback intent. Preparation is
+visible and cancellable; these operations can include a short silence. Mixer
+buttons change only gains. The processor is bundled locally, with bounded
+initialization/command waits and a visible error on failure.
+
+`K` toggles playback even when a mixer or speed button has focus. Space and
+Enter activate the focused button; with focus on the page, they toggle playback.
+Text inputs keep their normal typing behavior.
+
+`GET /api/tracks/:id/mixer` prepares and caches this derived media under
+`storage/media/mixers`. Original files remain the waveform/download sources.
+Generation is deduplicated, uses atomic output, and pads shorter stems to the
+original duration. Deleting a track also removes its mixer cache. The cache
+uses about 34.6 MB per minute (173 MB for five minutes), and playback streams at
+about 4.6 Mbps; the browser does not retain three full decoded PCM buffers in
+JavaScript. Synchronized mixing supports tracks up to two hours to stay within
+RIFF WAV limits. The editor shows preparation or failure before enabling the
+mixer, rather than falling back to unsynchronized sources.
+There is no cache quota or automatic eviction of older source fingerprints;
+track deletion removes all of that track's cached variants.
+
 ## Production Docker Hosting
 
 Production runs as a public Node container plus an internal Python/OpenVINO

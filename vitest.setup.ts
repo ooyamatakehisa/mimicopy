@@ -16,15 +16,25 @@ const audioBuffer = {
 
 class AudioContextMock {
   currentTime = 0;
+  state: AudioContextState = "suspended";
   destination = {};
   createMediaElementSource = vi.fn(() => ({
     connect: vi.fn(),
     disconnect: vi.fn()
   }));
+  createChannelSplitter = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }));
+  createChannelMerger = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }));
   createGain = vi.fn(() => ({
+    channelCount: 2,
+    channelCountMode: "max",
     connect: vi.fn(),
+    disconnect: vi.fn(),
     gain: {
+      value: 1,
+      cancelAndHoldAtTime: vi.fn(),
+      cancelScheduledValues: vi.fn(),
       exponentialRampToValueAtTime: vi.fn(),
+      linearRampToValueAtTime: vi.fn(),
       setValueAtTime: vi.fn()
     }
   }));
@@ -36,8 +46,8 @@ class AudioContextMock {
     type: "sine"
   }));
   decodeAudioData = vi.fn(() => Promise.resolve(audioBuffer));
-  close = vi.fn(() => Promise.resolve(undefined));
-  resume = vi.fn(() => Promise.resolve(undefined));
+  close = vi.fn(async () => { this.state = "closed"; });
+  resume = vi.fn(async () => { this.state = "running"; });
 }
 
 const canvasContext = {

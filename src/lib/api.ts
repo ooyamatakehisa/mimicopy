@@ -51,6 +51,15 @@ export async function fetchTrack(trackId: string) {
   return parseTrackResponse(body);
 }
 
+export async function fetchTrackMixer(trackId: string): Promise<string> {
+  const response = await fetch(`/api/tracks/${encodeURIComponent(trackId)}/mixer`);
+  const body = await parseJsonResponse(response, "同期再生用の音源を準備できませんでした。");
+  if (!body || typeof body !== "object" || !("mediaUrl" in body) || typeof body.mediaUrl !== "string") {
+    throw new Error("同期再生用の音源情報が不正です。");
+  }
+  return body.mediaUrl;
+}
+
 export async function uploadTrack(file: File) {
   const response = await fetch("/api/tracks", {
     body: file,

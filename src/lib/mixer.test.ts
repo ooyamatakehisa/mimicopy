@@ -1,12 +1,23 @@
 import {
   defaultMixerState,
   getEffectiveMixerVolume,
-  getMixerFollowerPlaybackRate,
-  getMixerPlaybackClock,
-  shouldHardSyncMixerFollower
+  getMixerGainAtTime
 } from "./mixer";
 
 describe("mixer helpers", () => {
+  it("preserves the instantaneous level when a fade is interrupted", () => {
+    const fadeOut = { from: 1, to: 0, startTime: 1, endTime: 1.008 };
+    expect(getMixerGainAtTime(fadeOut, 0)).toBe(1);
+    expect(getMixerGainAtTime(fadeOut, 1.004)).toBeCloseTo(0.5);
+    expect(getMixerGainAtTime(fadeOut, 2)).toBe(0);
+    const reversed = { from: getMixerGainAtTime(fadeOut, 1.004), to: 1,
+      startTime: 1.004, endTime: 1.012 };
+    expect(getMixerGainAtTime(reversed, 1.004)).toBeCloseTo(0.5);
+    expect(getMixerGainAtTime(reversed, 1.008)).toBeCloseTo(0.75);
+    expect(getMixerGainAtTime(reversed, 2)).toBe(1);
+    expect(getMixerGainAtTime({ from: 0.4, to: 0.4, startTime: 0, endTime: 0 }, 0)).toBe(0.4);
+  });
+
   it("applies volume, mute, and solo to each channel", () => {
     expect(
       getEffectiveMixerVolume(
@@ -48,122 +59,14 @@ describe("mixer helpers", () => {
     ).toBe(0.7);
   });
 
-  it("uses the audible stem as clock when the original is muted", () => {
-    expect(
-      getMixerPlaybackClock({
-        hasRemainder: true,
-        hasStem: true,
-        originalVolume: 0,
-        remainderVolume: 1,
-        stemVolume: 1
-      })
-    ).toBe("stem");
-    expect(
-      getMixerPlaybackClock({
-        hasRemainder: true,
-        hasStem: true,
-        originalVolume: 1,
-        remainderVolume: 1,
-        stemVolume: 1
-      })
-    ).toBe("original");
-    expect(
-      getMixerPlaybackClock({
-        hasRemainder: false,
-        hasStem: false,
-        originalVolume: 0,
-        remainderVolume: 1,
-        stemVolume: 1
-      })
-    ).toBe("original");
-    expect(
-      getMixerPlaybackClock({
-        hasRemainder: true,
-        hasStem: true,
-        originalVolume: 0,
-        remainderVolume: 1,
-        stemVolume: 0
-      })
-    ).toBe("remainder");
-  });
-
-  it("hard-syncs only muted followers", () => {
-    expect(
-      shouldHardSyncMixerFollower({
-        driftSeconds: 0.08,
-        followerVolume: 0
-      })
-    ).toBe(true);
-    expect(
-      shouldHardSyncMixerFollower({
-        driftSeconds: 0.08,
-        followerVolume: 1
-      })
-    ).toBe(false);
-    expect(
-      shouldHardSyncMixerFollower({
-        driftSeconds: 2,
-        followerVolume: 1
-      })
-    ).toBe(false);
-  });
-
-  it("corrects audible drift with small playback-rate changes", () => {
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 1,
-        driftSeconds: 0.1,
-        followerVolume: 1
-      })
-    ).toBeCloseTo(0.98);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 1,
-        driftSeconds: -0.1,
-        followerVolume: 1
-      })
-    ).toBeCloseTo(1.02);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 0.75,
-        currentPlaybackRate: 0.75,
-        driftSeconds: 0.01,
-        followerVolume: 1
-      })
-    ).toBe(0.75);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 1,
-        driftSeconds: 1,
-        followerVolume: 1
-      })
-    ).toBe(0.98);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 1,
-        driftSeconds: 0.1,
-        followerVolume: 0
-      })
-    ).toBe(1);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 0.98,
-        driftSeconds: 0.02,
-        followerVolume: 1
-      })
-    ).toBe(0.98);
-    expect(
-      getMixerFollowerPlaybackRate({
-        basePlaybackRate: 1,
-        currentPlaybackRate: 0.98,
-        driftSeconds: 0.005,
-        followerVolume: 1
-      })
-    ).toBe(1);
+  it("keeps mute dominant over solo and preserves multiple solos", () => {
+    const channels = {
+      original: { muted: true, solo: true, volume: 1 },
+      stem: { muted: false, solo: true, volume: 0.5 },
+      remainder: { muted: false, solo: true, volume: 0.8 }
+    };
+    expect(getEffectiveMixerVolume(channels, "original")).toBe(0);
+    expect(getEffectiveMixerVolume(channels, "stem")).toBe(0.5);
+    expect(getEffectiveMixerVolume(channels, "remainder")).toBe(0.8);
   });
 });

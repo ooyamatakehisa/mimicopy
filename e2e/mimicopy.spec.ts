@@ -1,13 +1,50 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import { expect, test, type Page } from "@playwright/test";
+import { generateMixerMedia } from "../server/mixerMedia";
 
 const realYoutubeUrl =
   process.env.MIMICOPY_E2E_YOUTUBE_URL ??
   "https://www.youtube.com/watch?v=OS45uTF_8P0&list=RDOS45uTF_8P0&start_radio=1";
 const runRealYoutubeE2e = process.env.MIMICOPY_E2E_REAL_YOUTUBE === "1";
 
+const fixtureDurationSeconds = 20;
+let fixtureDirectory: string | undefined;
+let sourceMp3: Buffer;
+let mixerWav: Buffer;
+
+test.beforeAll(async () => {
+  fixtureDirectory = await mkdtemp(path.join(tmpdir(), "mimicopy-e2e-media-"));
+  const wavPath = path.join(fixtureDirectory, "source.wav");
+  const mp3Path = path.join(fixtureDirectory, "source.mp3");
+  const mixerPath = path.join(fixtureDirectory, "mixer.wav");
+  const binary = process.env.FFMPEG_PATH ?? createRequire(import.meta.url)("ffmpeg-static") as unknown;
+  if (typeof binary !== "string" || binary.length === 0) {
+    throw new Error("ffmpeg is required to create genuine MP3 fixtures.");
+  }
+  await writeFile(wavPath, createToneWavBuffer());
+  await promisify(execFile)(binary, [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-i", wavPath, "-codec:a", "libmp3lame", "-b:a", "128k", mp3Path
+  ]);
+  await generateMixerMedia({
+    originalPath: mp3Path, stemPath: mp3Path,
+    remainderPath: mp3Path, outputPath: mixerPath
+  }, binary);
+  [sourceMp3, mixerWav] = await Promise.all([readFile(mp3Path), readFile(mixerPath)]);
+});
+
+test.afterAll(async () => {
+  if (fixtureDirectory) await rm(fixtureDirectory, { recursive: true, force: true });
+});
+
 function createToneWavBuffer() {
   const sampleRate = 44_100;
-  const durationSeconds = 3;
+  const durationSeconds = fixtureDurationSeconds;
   const sampleCount = sampleRate * durationSeconds;
   const channelCount = 1;
   const bitsPerSample = 16;
@@ -122,7 +159,7 @@ async function mockYoutubeConversion(page: Page) {
   const now = new Date().toISOString();
   const track = {
     createdAt: now,
-    duration: 1,
+    duration: fixtureDurationSeconds,
     id: "e2e-youtube-track",
     markerCount: 0,
     markers: [],
@@ -163,6 +200,26 @@ async function mockYoutubeConversion(page: Page) {
       });
     }
   );
+  await page.route("**/api/tracks/e2e-youtube-track/mixer", async (route) => {
+    await route.fulfill({
+      json: { mediaUrl: "/media/e2e-youtube-mixer.wav" }
+    });
+  });
+  await page.route("**/media/e2e-youtube-mixer.wav", async (route) => {
+    // Mirror express.static byte ranges so real media seeks stay seekable.
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), mixerWav.length - 1) : mixerWav.length - 1;
+    await route.fulfill({
+      body: mixerWav.subarray(start, end + 1),
+      contentType: "audio/wav",
+      headers: {
+        "accept-ranges": "bytes",
+        ...(range ? { "content-range": `bytes ${start}-${end}/${mixerWav.length}` } : {})
+      },
+      status: range ? 206 : 200
+    });
+  });
   await page.route("**/api/youtube", async (route) => {
     const requestBody = route.request().postDataJSON() as {
       targetStem?: unknown;
@@ -207,14 +264,14 @@ async function mockYoutubeConversion(page: Page) {
   });
   await page.route("**/media/e2e-youtube.mp3", async (route) => {
     await route.fulfill({
-      body: createToneWavBuffer(),
+      body: sourceMp3,
       contentType: "audio/mpeg",
       status: 200
     });
   });
   await page.route("**/media/e2e-youtube-guitar.mp3", async (route) => {
     await route.fulfill({
-      body: createToneWavBuffer(),
+      body: sourceMp3,
       contentType: "audio/mpeg",
       status: 200
     });
@@ -223,7 +280,7 @@ async function mockYoutubeConversion(page: Page) {
     "**/media/e2e-youtube-guitar-remainder.mp3",
     async (route) => {
       await route.fulfill({
-        body: createToneWavBuffer(),
+        body: sourceMp3,
         contentType: "audio/mpeg",
         status: 200
       });
@@ -249,7 +306,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.getByTitle("MP3を選択").click();
   const fileChooser = await fileChooserPromise;
   await fileChooser.setFiles({
-    buffer: createToneWavBuffer(),
+    buffer: sourceMp3,
     mimeType: "audio/mpeg",
     name: "e2e-tone.mp3"
   });
@@ -389,15 +446,15 @@ test("loads audio and supports the main playback and marker workflow", async ({
     .toBeLessThan(0.1);
   await page.getByTitle("マーカー削除").click();
   await expect(page.getByText("No markers")).toBeVisible();
-
   await page.getByTitle("再生").focus();
+  await page.keyboard.press("ArrowRight");
   await page.keyboard.press("KeyM");
-  await expect(page.getByLabel("Marker 1 label")).toHaveValue("Marker 1");
+  await expect(page.getByLabel("Marker 1 time")).toHaveValue("0:05");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Backspace");
-  await expect.poll(() => page.locator("audio").first().evaluate(
-    (audio) => (audio as HTMLAudioElement).currentTime
-  )).toBeLessThan(0.1);
+  await expect.poll(() => page.locator("audio").evaluate((element) =>
+    (element as HTMLAudioElement).currentTime
+  )).toBeCloseTo(5, 1);
   await page.getByTitle("マーカー削除").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("No markers")).toBeVisible();
@@ -456,7 +513,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
       };
     });
 
-  expect(mediaState.src).toContain("/media/e2e-youtube.mp3");
+  expect(mediaState.src).toContain("/media/e2e-youtube-mixer.wav");
   expect(mediaState.duration).toBeGreaterThan(0);
   const mixer = page.getByLabel("Audio mixer");
 
@@ -494,154 +551,75 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
     "true"
   );
 
-  const originalAudio = page.locator('audio[aria-label="Original audio"]');
-  const stemAudio = page.locator(
-    'audio[aria-label="Separated stem audio"]'
-  );
-  const remainderAudio = page.locator(
-    'audio[aria-label="Separated remainder audio"]'
-  );
+  const transport = page.locator('audio[aria-label="Original audio"]');
+  await expect(page.locator("audio")).toHaveCount(1);
+  await expect.poll(() => transport.evaluate((element) =>
+    (element as HTMLAudioElement).readyState
+  )).toBeGreaterThanOrEqual(2);
 
-  await expect
-    .poll(async () => {
-      return page.locator("audio").evaluateAll(
-        (elements) =>
-          elements.length === 3 &&
-          elements.every(
-            (element) =>
-              (element as HTMLAudioElement).readyState >=
-              HTMLMediaElement.HAVE_CURRENT_DATA
-          )
-      );
-    })
-    .toBe(true);
-  await stemAudio.evaluate((element) => {
-    const audio = element as HTMLAudioElement;
-
-    audio.play = () => Promise.resolve();
-  });
-  await remainderAudio.evaluate((element) => {
-    const audio = element as HTMLAudioElement;
-
-    audio.play = () => Promise.resolve();
-  });
-  await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio, remainderAudio] =
-      elements as [
-        HTMLAudioElement,
-        HTMLAudioElement,
-        HTMLAudioElement
-      ];
-
-    originalAudio.currentTime = 0.5;
-    stemAudio.currentTime = 0.5;
-    remainderAudio.currentTime = 0.5;
-    originalAudio.dispatchEvent(new Event("play"));
-  });
+  await page.getByTitle("再生").click();
   await expect(page.getByTitle("停止")).toBeVisible();
-  await page.waitForTimeout(100);
-  await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio, remainderAudio] =
-      elements as [
-        HTMLAudioElement,
-        HTMLAudioElement,
-        HTMLAudioElement
-      ];
-
-    stemAudio.dataset.seekEvents = "0";
-    remainderAudio.dataset.seekEvents = "0";
-    stemAudio.addEventListener("seeking", () => {
-      stemAudio.dataset.seekEvents = String(
-        Number(stemAudio.dataset.seekEvents ?? "0") + 1
-      );
-    });
-    remainderAudio.addEventListener("seeking", () => {
-      remainderAudio.dataset.seekEvents = String(
-        Number(remainderAudio.dataset.seekEvents ?? "0") + 1
-      );
-    });
-    originalAudio.currentTime = 0.4;
-  });
-  await expect
-    .poll(async () => {
-      const times = await page.locator("audio").evaluateAll((elements) =>
-        elements.map((element) => (element as HTMLAudioElement).currentTime)
-      );
-
-      const clockTime = times[1] ?? 0;
-
-      return Math.max(
-        Math.abs((times[0] ?? 0) - clockTime),
-        Math.abs((times[2] ?? 0) - clockTime)
-      );
-    })
-    .toBeLessThan(0.075);
-  await page.waitForTimeout(100);
-  await expect(
-    stemAudio
-  ).toHaveAttribute("data-seek-events", "0");
-  await expect
-    .poll(async () => remainderAudio.getAttribute("data-seek-events"))
-    .toBe("0");
-
+  await expect.poll(() => transport.evaluate((element) =>
+    (element as HTMLAudioElement).currentTime
+  )).toBeGreaterThan(0.1);
+  // Exercise all six native buttons during real playback. The audio audit
+  // separately measures output; this UI test never substitutes media clocks.
   await mixer.getByTitle("ギターをソロ").click();
-  await expect(mixer.getByTitle("ギターをソロ")).toHaveAttribute(
-    "aria-pressed",
-    "false"
-  );
-  await page.locator("audio").evaluateAll((elements) => {
-    const [originalAudio, stemAudio, remainderAudio] =
-      elements as [
-        HTMLAudioElement,
-        HTMLAudioElement,
-        HTMLAudioElement
-      ];
-
-    const fixMediaTime = (
-      audio: HTMLAudioElement,
-      initialTime: number
-    ) => {
-      let mediaTime = initialTime;
-
-      Object.defineProperty(audio, "currentTime", {
-        configurable: true,
-        get: () => mediaTime,
-        set: (nextTime: number) => {
-          mediaTime = nextTime;
-          audio.dispatchEvent(new Event("seeking"));
-        }
-      });
-    };
-
-    fixMediaTime(originalAudio, 0.5);
-    fixMediaTime(stemAudio, 0.6);
-    fixMediaTime(remainderAudio, 0.4);
-    stemAudio.dataset.seekEvents = "0";
-    remainderAudio.dataset.seekEvents = "0";
-  });
-  await expect
-    .poll(async () =>
-      stemAudio.evaluate((element) => {
-        return (element as HTMLAudioElement).playbackRate;
-      })
-    )
-    .toBeLessThan(1);
-  await expect
-    .poll(async () =>
-      remainderAudio.evaluate((element) => {
-        return (element as HTMLAudioElement).playbackRate;
-      })
-    )
-    .toBeGreaterThan(1);
-  await page.waitForTimeout(100);
-  await expect(stemAudio).toHaveAttribute("data-seek-events", "0");
-  await expect(remainderAudio).toHaveAttribute(
-    "data-seek-events",
-    "0"
-  );
-
-  await originalAudio.dispatchEvent("pause");
-  await expect(page.getByTitle("再生")).toBeVisible();
+  for (const channel of ["原音", "ギター", "ギター以外"]) {
+    for (const action of ["ソロ", "ミュート"]) {
+      const button = mixer.getByTitle(`${channel}を${action}`);
+      await button.focus();
+      await page.keyboard.press("Space");
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByTitle("停止")).toBeVisible();
+      await page.keyboard.press("Enter");
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+      await expect(page.getByTitle("停止")).toBeVisible();
+    }
+  }
+  await page.getByTitle("速度を下げる").focus();
+  for (const rate of [0.75, 0.5, 0.25]) {
+    await page.keyboard.press("Shift+Comma");
+    await expect.poll(() => transport.evaluate((element) =>
+      (element as HTMLAudioElement).playbackRate
+    )).toBe(rate);
+  }
+  for (const rate of [0.5, 0.75, 1]) {
+    await page.keyboard.press("Shift+Period");
+    await expect.poll(() => transport.evaluate((element) =>
+      (element as HTMLAudioElement).playbackRate
+    )).toBe(rate);
+  }
+  // Clicking another control must not strand the global K transport shortcut.
+  // Include a speed change so Stop can also cancel its pending preparation.
+  for (const title of ["ギターをソロ", "速度を下げる"]) {
+    await page.getByTitle(title, { exact: true }).click();
+    await page.keyboard.press("KeyK");
+    await expect(page.getByTitle("再生", { exact: true })).toBeVisible();
+    await expect.poll(() => transport.evaluate((element) =>
+      (element as HTMLAudioElement).paused
+    )).toBe(true);
+    await page.keyboard.press("KeyK");
+    await expect(page.getByTitle("停止", { exact: true })).toBeVisible();
+    await expect.poll(() => transport.evaluate((element) =>
+      (element as HTMLAudioElement).paused
+    )).toBe(false);
+  }
+  await page.getByTitle("停止").click();
+  await expect.poll(() => transport.evaluate((element) =>
+    (element as HTMLAudioElement).paused
+  )).toBe(true);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => transport.evaluate((element) =>
+    (element as HTMLAudioElement).currentTime
+  )).toBeGreaterThan(5);
+  const seekTime = await transport.evaluate((element) => (element as HTMLAudioElement).currentTime);
+  expect(seekTime).toBeGreaterThan(5);
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(() => transport.evaluate((element) =>
+    (element as HTMLAudioElement).currentTime
+  )).toBeCloseTo(seekTime - 5, 1);
+  await expect(page.locator("audio")).toHaveCount(1);
 
   await page.getByTitle("ライブラリへ戻る").click();
   await expect(page).toHaveURL("/");
@@ -657,7 +635,7 @@ test("shows stem separation progress and remaining time", async ({ page }) => {
   const now = new Date().toISOString();
   const track = {
     createdAt: now,
-    duration: 3,
+    duration: fixtureDurationSeconds,
     id: "e2e-progress-track",
     markerCount: 0,
     markers: [],
@@ -701,7 +679,7 @@ test("shows stem separation progress and remaining time", async ({ page }) => {
   );
   await page.route("**/media/e2e-progress.mp3", async (route) => {
     await route.fulfill({
-      body: createToneWavBuffer(),
+      body: sourceMp3,
       contentType: "audio/mpeg",
       status: 200
     });

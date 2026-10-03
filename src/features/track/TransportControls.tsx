@@ -39,6 +39,7 @@ type TransportControlsProps = {
   clickTrack: ClickTrackState;
   isAnalyzingBeatGrid: boolean;
   isLoadingBeatGrid: boolean;
+  isPlaybackReady: boolean;
   markers: MarkersState;
   onRetryBeatAnalysis: () => void;
   playback: PlaybackState;
@@ -53,6 +54,7 @@ export function TransportControls({
   clickTrack,
   isAnalyzingBeatGrid,
   isLoadingBeatGrid,
+  isPlaybackReady,
   markers,
   onRetryBeatAnalysis,
   playback,
@@ -82,12 +84,14 @@ export function TransportControls({
         <Button
           size="transport"
           variant="primary"
-          title={playback.isPlaying ? "停止" : "再生"}
+          title={playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}
+          disabled={!isPlaybackReady}
           onClick={playback.togglePlayback}
         >
-          {playback.isPlaying ? <Pause size={21} /> : <Play size={21} />}
-          <span>{playback.isPlaying ? "停止" : "再生"}</span>
+          {playback.isPlaying || playback.isPlayPending ? <Pause size={21} /> : <Play size={21} />}
+          <span>{playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}</span>
         </Button>
+        {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="text-xs text-muted">再生位置を準備しています。</span> : null}
         <Button
           size="transport"
           title="5秒戻る"

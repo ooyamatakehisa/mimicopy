@@ -19,6 +19,21 @@ function isTextEntryTarget(target: EventTarget | null) {
   );
 }
 
+function usesNativeActivation(event: KeyboardEvent) {
+  if (!(event.target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (event.key !== " " && event.key !== "Enter") {
+    return false;
+  }
+
+  return Boolean(
+    event.target.closest("button, [role='button'], summary") ||
+      (event.key === "Enter" && event.target.closest("a[href], [role='link']"))
+  );
+}
+
 export function KeyboardShortcuts({
   markers,
   playback
@@ -40,16 +55,10 @@ export function KeyboardShortcuts({
 
   const handleShortcut = useCallback(
     (event: KeyboardEvent) => {
-      if (isTextEntryTarget(event.target)) {
-        return;
-      }
-
-      // Enter activates a focused control (including marker deletion).
-      // On the rest of the editor it remains a playback shortcut.
       if (
-        event.key === "Enter" &&
-        event.target instanceof HTMLElement &&
-        event.target.closest("button, a[href]")
+        event.defaultPrevented ||
+        isTextEntryTarget(event.target) ||
+        usesNativeActivation(event)
       ) {
         return;
       }

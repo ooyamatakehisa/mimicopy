@@ -14,6 +14,7 @@ import {
   fetchMediaArrayBuffer,
   fetchTrackBeatAnalysis,
   fetchTrack,
+  fetchTrackMixer,
   retryTrackBeatAnalysis,
   trackQueryKey,
   updateTrackTitle
@@ -28,10 +29,7 @@ import { PlaybackAudio } from "./PlaybackAudio";
 import { StemMixer } from "./StemMixer";
 import { TrackHeaderActions } from "./TrackHeaderActions";
 import { TransportControls } from "./TransportControls";
-import {
-  pitchShiftWindowSeconds,
-  useAudioPitchShift
-} from "./useAudioPitchShift";
+import { useAudioPitchShift } from "./useAudioPitchShift";
 import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
@@ -89,7 +87,16 @@ export function TrackEditorPage({
       : ["track", trackId, "decoded"]
   });
 
-  if (trackQuery.isLoading || decodedQuery.isLoading) {
+  const hasSeparatedMedia = track?.separation?.status === "completed" &&
+    Boolean(track.separation.mediaUrl && track.separation.remainderMediaUrl);
+  const mixerQuery = useQuery({
+    enabled: hasSeparatedMedia,
+    queryKey: ["track", trackId, "mixer", track?.separation?.mediaUrl, track?.separation?.remainderMediaUrl],
+    queryFn: () => fetchTrackMixer(trackId),
+    staleTime: Infinity
+  });
+
+  if ((!track && trackQuery.isLoading) || (!decodedQuery.data && decodedQuery.isLoading)) {
     return (
       <>
         <AppHeader
@@ -103,7 +110,7 @@ export function TrackEditorPage({
     );
   }
 
-  if (trackQuery.isError || decodedQuery.isError || !track || !decodedQuery.data) {
+  if (!track || !decodedQuery.data) {
     return (
       <>
         <AppHeader
@@ -126,6 +133,13 @@ export function TrackEditorPage({
   return (
     <TrackEditor
       key={track.id}
+      mixerMediaUrl={hasSeparatedMedia ? mixerQuery.data ?? null : null}
+      mixerPreparationMessage={hasSeparatedMedia && !mixerQuery.data
+        ? mixerQuery.isError
+          ? getErrorMessage(mixerQuery.error, "同期再生用の音源を準備できませんでした。")
+          : "同期再生用の音源を準備しています。原音は引き続き再生できます。"
+        : null}
+      mixerPreparationFailed={mixerQuery.isError}
       track={track}
       decoded={decodedQuery.data}
       navigateToLibrary={navigateToLibrary}
@@ -166,10 +180,16 @@ function TrackLoadingPanel({
 
 function TrackEditor({
   decoded,
+  mixerMediaUrl,
+  mixerPreparationMessage,
+  mixerPreparationFailed,
   navigateToLibrary,
   track
 }: {
   decoded: DecodedAudio;
+  mixerMediaUrl: string | null;
+  mixerPreparationMessage: string | null;
+  mixerPreparationFailed: boolean;
   navigateToLibrary: () => void;
   track: TrackDetail;
 }) {
@@ -204,12 +224,15 @@ function TrackEditor({
   });
   const mixer = useStemMixer();
   const transpose = useTranspose();
+  const playbackMediaUrl = mixerMediaUrl ?? track.mediaUrl;
   const pitchShift = useAudioPitchShift({
     playback,
-    remainderMediaUrl:
-      track.separation?.remainderMediaUrl ?? null,
-    semitones: transpose.semitones,
-    stemMediaUrl: track.separation?.mediaUrl ?? null
+    mediaUrl: playbackMediaUrl,
+    originalVolume: mixer.originalVolume,
+    stemVolume: mixer.stemVolume,
+    remainderVolume: mixer.remainderVolume,
+    isMultichannel: Boolean(mixerMediaUrl),
+    semitones: transpose.semitones
   });
   const markers = useMarkersState({
     initialMarkers: track.markers,
@@ -222,8 +245,7 @@ function TrackEditor({
   const clickTrack = useClickTrack({
     audioContext: pitchShift.audioContext,
     beatGrid,
-    outputLatencySeconds:
-      transpose.semitones === 0 ? 0 : pitchShiftWindowSeconds,
+    outputLatencySeconds: pitchShift.outputLatencySeconds,
     playback
   });
   const beatGridErrorMessage =
@@ -253,7 +275,8 @@ function TrackEditor({
         : null;
   const description =
     titleMessage ??
-    (markers.isSavingMarkers ? "マーカー保存中" : errorMessage);
+    (markers.isSavingMarkers ? "マーカー保存中" : errorMessage ??
+      (!pitchShift.audioContext ? "音声処理を準備しています。" : null));
 
   const renameTrack = async (title: string) => {
     const trimmedTitle = title.trim();
@@ -280,17 +303,7 @@ function TrackEditor({
 
   return (
     <>
-      <PlaybackAudio
-        mediaUrl={track.mediaUrl}
-        originalVolume={mixer.originalVolume}
-        playback={playback}
-        remainderMediaUrl={
-          track.separation?.remainderMediaUrl ?? null
-        }
-        remainderVolume={mixer.remainderVolume}
-        stemMediaUrl={track.separation?.mediaUrl ?? null}
-        stemVolume={mixer.stemVolume}
-      />
+      <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback} />
       <KeyboardShortcuts markers={markers} playback={playback} />
       <AppHeader
         subtitle={`${track.title} ・ ${
@@ -336,6 +349,9 @@ function TrackEditor({
           {track.separation ? (
             <StemMixer
               mixer={mixer}
+              mixerReady={Boolean(mixerMediaUrl)}
+              preparationMessage={mixerPreparationMessage}
+              preparationFailed={mixerPreparationFailed}
               originalMediaUrl={track.mediaUrl}
               separation={track.separation}
               trackTitle={track.title}
@@ -373,6 +389,7 @@ function TrackEditor({
         clickTrack={clickTrack}
         isAnalyzingBeatGrid={beatGridMutation.isPending}
         isLoadingBeatGrid={beatGridQuery.isLoading}
+        isPlaybackReady={Boolean(pitchShift.audioContext)}
         onRetryBeatAnalysis={retryBeatAnalysis}
         markers={markers}
         playback={playback}

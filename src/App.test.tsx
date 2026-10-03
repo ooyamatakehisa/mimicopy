@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -6,9 +7,21 @@ import {
   within
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
+import { TrackEditorPage } from "./features/track/TrackEditorPage";
+import { decodedTrackQueryKey, trackQueryKey } from "./lib/api";
 import type { TrackBeatAnalysis } from "./lib/beats";
 import type { TrackDetail, TrackSummary } from "./lib/library";
+
+// App tests exercise orchestration with a zero-delay processor. Dedicated
+// transport tests cover latency and the browser audit measures actual output.
+vi.mock("./lib/pitchProcessor", () => ({
+  createPitchProcessor: async () => ({
+    node: { connect: vi.fn(), disconnect: vi.fn() }, latencySeconds: 0,
+    prepare: async () => {}, updatePitch: async () => {}, dispose: vi.fn()
+  })
+}));
 
 const baseTimestamp = "2026-07-15T00:00:00.000Z";
 
@@ -118,6 +131,10 @@ describe("App", () => {
 
         if (url === "/api/tracks/track-1" && method === "GET") {
           return Response.json({ track: tracks[0] ?? createTrack() });
+        }
+
+        if (url === "/api/tracks/track-1/mixer" && method === "GET") {
+          return Response.json({ mediaUrl: "/media/track-1-mixer.wav" });
         }
 
         if (url === "/api/tracks/track-1" && method === "PATCH") {
@@ -363,7 +380,7 @@ describe("App", () => {
     }
   });
 
-  it("toggles playback with keyboard shortcuts while a button is focused", async () => {
+  it("preserves native button activation while K still toggles playback", async () => {
     const playSpy = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockImplementation(() => Promise.resolve());
@@ -387,20 +404,32 @@ describe("App", () => {
       });
 
       const speedDownButton = await screen.findByTitle("速度を下げる");
+      await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
       const audio = container.querySelector<HTMLAudioElement>("audio");
 
       expect(audio).not.toBeNull();
+      Object.defineProperties(audio!, {
+        readyState: { configurable: true, value: 4 },
+        duration: { configurable: true, value: 10 }
+      });
       speedDownButton.focus();
-      fireEvent.keyDown(speedDownButton, { key: " " });
-      expect(playSpy).toHaveBeenCalledTimes(1);
+      expect(fireEvent.keyDown(speedDownButton, { key: " " })).toBe(true);
+      expect(fireEvent.keyDown(speedDownButton, { key: "Enter" })).toBe(true);
+      expect(playSpy).not.toHaveBeenCalled();
+      fireEvent.click(speedDownButton);
+      expect(within(screen.getByLabelText("Playback speed")).getByText("0.75x")).toBeVisible();
+      expect(playSpy).not.toHaveBeenCalled();
+      fireEvent.keyDown(speedDownButton, { key: "k" });
+      await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
 
       Object.defineProperty(audio as HTMLAudioElement, "paused", {
         configurable: true,
         value: false
       });
 
+      const pausesBeforeStop = pauseSpy.mock.calls.length;
       fireEvent.keyDown(speedDownButton, { key: "k" });
-      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      expect(pauseSpy).toHaveBeenCalledTimes(pausesBeforeStop + 1);
     } finally {
       playSpy.mockRestore();
       pauseSpy.mockRestore();
@@ -468,7 +497,7 @@ describe("App", () => {
     expect(within(zoomControls).getByText("1x")).toBeVisible();
   });
 
-  it("mixes the original and completed separated stem", async () => {
+  it("keeps all mixer controls on one completed-separation transport", async () => {
     tracks = [
       createTrack({
         separation: {
@@ -493,9 +522,11 @@ describe("App", () => {
 
     const mixer = screen.getByLabelText("Audio mixer");
     const originalVolume = within(mixer).getByLabelText("原音の音量");
+    await waitFor(() => expect(container.querySelector("audio")).toHaveAttribute("src", "/media/track-1-mixer.wav"));
     const audios = container.querySelectorAll("audio");
 
-    expect(audios).toHaveLength(3);
+    expect(audios).toHaveLength(1);
+    expect(audios[0]).toHaveAttribute("src", "/media/track-1-mixer.wav");
     expect(within(mixer).getByLabelText("原音 channel")).toBeVisible();
     expect(within(mixer).getByLabelText("ギター channel")).toBeVisible();
     expect(
@@ -516,29 +547,166 @@ describe("App", () => {
       })
     ).toHaveAttribute("download", "phrase-guitar-remainder.mp3");
 
+    for (const channel of ["原音", "ギター", "ギター以外"]) {
+      for (const action of ["ソロ", "ミュート"]) {
+        expect(within(mixer).getByTitle(`${channel}を${action}`)).toHaveAttribute("aria-pressed", "false");
+      }
+    }
+    await waitFor(() => expect(within(mixer).getByTitle("ギターをソロ")).toBeEnabled());
     fireEvent.change(originalVolume, { target: { value: "35" } });
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBeCloseTo(0.35);
-    });
+    expect(originalVolume).toHaveValue("35");
 
-    fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBe(0);
-      expect(audios[1]?.volume).toBe(1);
-      expect(audios[2]?.volume).toBe(0);
-    });
+    const guitarSolo = within(mixer).getByTitle("ギターをソロ");
+    const guitarMute = within(mixer).getByTitle("ギターをミュート");
+    const remainderMute = within(mixer).getByTitle("ギター以外をミュート");
+    fireEvent.click(guitarSolo);
+    expect(guitarSolo).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(guitarMute);
+    expect(guitarMute).toHaveAttribute("aria-pressed", "true");
+    expect(guitarSolo).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(guitarSolo);
+    fireEvent.click(remainderMute);
+    expect(guitarSolo).toHaveAttribute("aria-pressed", "false");
+    expect(guitarMute).toHaveAttribute("aria-pressed", "true");
+    expect(remainderMute).toHaveAttribute("aria-pressed", "true");
+    expect(originalVolume).toHaveValue("35");
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
+  });
 
-    fireEvent.click(within(mixer).getByTitle("ギターをミュート"));
-    await waitFor(() => {
-      expect(audios[1]?.volume).toBe(0);
-    });
+  it("preserves dirty markers, cursor and settings when late separation prepares a mixer", async () => {
+    const running = createTrack({ separation: {
+      createdAt: baseTimestamp, updatedAt: baseTimestamp, error: null,
+      mediaUrl: null, remainderMediaUrl: null, progress: null,
+      status: "running", targetStem: "guitar"
+    } });
+    const completed = createTrack({ separation: {
+      ...running.separation!, status: "completed",
+      mediaUrl: "/media/guitar.mp3", remainderMediaUrl: "/media/remainder.mp3"
+    } });
+    tracks = [running];
+    let finishMixer: (response: Response) => void = () => {};
+    const mixerResponse = new Promise<Response>((resolve) => { finishMixer = resolve; });
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/mixer"
+      ? mixerResponse : baseFetch(input, init));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(trackQueryKey(running.id), running);
+    client.setQueryData(decodedTrackQueryKey(running.id, running.mediaUrl), { duration: 10, peaks: [] });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const { container, unmount } = render(
+      <QueryClientProvider client={client}>
+        <TrackEditorPage trackId={running.id} navigateToLibrary={() => {}} />
+      </QueryClientProvider>
+    );
+    try {
+      await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+      const original = container.querySelector("audio")!;
+      Object.defineProperties(original, {
+        duration: { configurable: true, value: 10 },
+        readyState: { configurable: true, value: 4 }
+      });
+      fireEvent.loadedMetadata(original);
+      original.currentTime = 4;
+      fireEvent.timeUpdate(original);
+      fireEvent.click(screen.getByTitle("速度を下げる"));
+      fireEvent.click(screen.getByTitle("半音上げる"));
+      fireEvent.change(screen.getByLabelText("原音の音量"), { target: { value: "35" } });
+      fireEvent.click(screen.getByTitle("再生"));
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      Object.defineProperty(original, "paused", { configurable: true, value: false });
+      fireEvent.play(original);
+      expect(screen.getByTitle("停止")).toBeVisible();
 
-    fireEvent.click(within(mixer).getByTitle("ギターをソロ"));
-    fireEvent.click(within(mixer).getByTitle("ギター以外をミュート"));
-    await waitFor(() => {
-      expect(audios[0]?.volume).toBeCloseTo(0.35);
-      expect(audios[2]?.volume).toBe(0);
-    });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
+      fireEvent.change(screen.getByLabelText("Marker 1 label"), { target: { value: "Unsent phrase" } });
+      const markerWrites = () => fetchMock.mock.calls.filter(([input, init]) =>
+        input === "/api/tracks/track-1/markers" && init?.method === "PUT");
+      expect(markerWrites()).toHaveLength(0);
+      tracks = [completed];
+      await act(async () => {
+        client.setQueryData(trackQueryKey(running.id), completed);
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(screen.getByText(/同期再生用の音源を準備しています/)).toBeVisible();
+      expect(container.querySelector("audio")).toBe(original);
+      expect(screen.getByTitle("ギターをソロ")).toBeDisabled();
+      expect(screen.getByTitle("ギター以外をミュート")).toBeDisabled();
+      expect(screen.getByTitle("原音をミュート")).toBeEnabled();
+      expect(screen.getByTitle("停止")).toBeEnabled();
+      expect(screen.getByLabelText("Unsent phrase time")).toHaveValue("0:04");
+      expect(markerWrites()).toHaveLength(0);
+
+      await act(async () => {
+        finishMixer(Response.json({ mediaUrl: "/media/track-1-mixer.wav" }));
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const replacement = container.querySelector("audio")!;
+      expect(replacement).not.toBe(original);
+      expect(replacement).toHaveAttribute("src", "/media/track-1-mixer.wav");
+      expect(pause.mock.contexts).toContain(original);
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(screen.getByTitle("再生")).toBeVisible();
+      expect(screen.getByLabelText("Playback speed")).toHaveTextContent("0.75x");
+      expect(screen.getByLabelText("Transpose")).toHaveTextContent("+1");
+      expect(screen.getByLabelText("原音の音量")).toHaveValue("35");
+      expect(replacement.playbackRate).toBe(0.75);
+      // Replacement media emits initial zeroes before metadata and seek complete.
+      fireEvent.timeUpdate(replacement);
+      expect(screen.getByLabelText("再生位置")).toHaveAttribute("aria-valuenow", "4");
+      let restoring = true;
+      Object.defineProperties(replacement, {
+        duration: { configurable: true, value: 10 },
+        readyState: { configurable: true, value: 1 },
+        seeking: { configurable: true, get: () => restoring }
+      });
+      fireEvent.loadedMetadata(replacement);
+      expect(replacement.currentTime).toBe(4);
+      replacement.currentTime = 0;
+      fireEvent.timeUpdate(replacement);
+      expect(screen.getByLabelText("再生位置")).toHaveAttribute("aria-valuenow", "4");
+      replacement.currentTime = 4;
+      restoring = false;
+      fireEvent.seeked(replacement);
+      expect(screen.getByTitle("ギターをソロ")).toBeEnabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      expect(markerWrites()).toHaveLength(1);
+      expect(tracks[0]?.markers).toEqual([expect.objectContaining({ label: "Unsent phrase", time: 4 })]);
+      expect(screen.getByLabelText("Unsent phrase time")).toHaveValue("0:04");
+      unmount();
+      expect(pause.mock.contexts).toContain(replacement);
+    } finally {
+      unmount();
+      client.clear();
+      vi.useRealTimers();
+      play.mockRestore();
+      pause.mockRestore();
+    }
+  });
+
+  it("keeps the original editor usable when mixer preparation fails", async () => {
+    tracks = [createTrack({ separation: {
+      createdAt: baseTimestamp, updatedAt: baseTimestamp, error: null,
+      mediaUrl: "/media/guitar.mp3", remainderMediaUrl: "/media/remainder.mp3",
+      progress: null, status: "completed", targetStem: "guitar"
+    } })];
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/mixer"
+      ? Promise.resolve(Response.json({ error: "Mixer preparation failed" }, { status: 500 }))
+      : baseFetch(input, init));
+    window.history.replaceState(null, "", "/tracks/track-1");
+    const { container } = render(<App />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Mixer preparation failed"));
+    expectTrackEditorLoaded("phrase.mp3");
+    expect(container.querySelector("audio")).toHaveAttribute("src", "/media/track-1.mp3");
+    expect(screen.getByTitle("原音をミュート")).toBeEnabled();
+    expect(screen.getByTitle("ギターをソロ")).toBeDisabled();
+    await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+    fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
+    expect(screen.getByLabelText("Marker 1 time")).toHaveValue("0:00");
   });
 
   it("shows stem separation percentage and estimated remaining time", async () => {
@@ -712,6 +880,7 @@ describe("App", () => {
     const audio = container.querySelector<HTMLAudioElement>("audio");
 
     expect(audio).not.toBeNull();
+    fireEvent.loadedMetadata(audio as HTMLAudioElement);
     (audio as HTMLAudioElement).currentTime = 4;
     fireEvent.timeUpdate(audio as HTMLAudioElement);
     fireEvent.click(screen.getByTitle("現在位置にマーカー追加"));
