@@ -46,8 +46,8 @@ export function FolderSidebar({
     }
   ];
   return (
-    <aside className="min-w-0 border-b border-line bg-surface-soft p-5 lg:border-b-0 lg:border-r">
-      <div className="mb-6 flex items-baseline justify-between gap-3">
+    <aside className="min-w-0 border-b border-line bg-surface-soft p-3 lg:p-5 lg:border-b-0 lg:border-r">
+      <div className="mb-3 flex items-baseline lg:mb-6 justify-between gap-3">
         <h2 className="text-lg font-semibold tracking-tight">Library</h2>
         <span className="text-xs tabular-nums text-muted">
           {tracks.length} 曲

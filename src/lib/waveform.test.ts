@@ -7,12 +7,23 @@ import {
   getWaveformRange,
   keepTimeInWaveformRange,
   nextWaveformZoom,
+  panWaveformRange,
   scaleWaveformZoom,
   timeToWaveformPercent,
   waveformPercentToTime
 } from "./waveform";
 
 describe("waveform helpers", () => {
+  it("pans by visible-width fractions and clamps at both ends", () => {
+    expect(panWaveformRange(120, 4, 20, 0.5)).toBe(35);
+    expect(panWaveformRange(120, 4, 20, -0.5)).toBe(5);
+    expect(panWaveformRange(120, 4, 20, 10)).toBe(90);
+    expect(panWaveformRange(120, 4, 20, -10)).toBe(0);
+    expect(panWaveformRange(120, 1, 0, 1)).toBe(0);
+    expect(panWaveformRange(0, 4, 0, 1)).toBe(0);
+    expect(panWaveformRange(120, 4, 20, Number.NaN)).toBe(20);
+  });
+
   it("summarizes audio samples into min/max peaks", () => {
     const peaks = buildWaveformPeaks(
       {

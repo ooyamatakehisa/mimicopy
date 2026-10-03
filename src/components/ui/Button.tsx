@@ -42,7 +42,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      className={cn(buttonVariants({ size, variant }), className)}
+      className={cn(buttonVariants({ size, variant }), "touch-manipulation", className)}
       type={type}
       {...props}
     />

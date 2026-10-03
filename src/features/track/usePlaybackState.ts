@@ -369,6 +369,10 @@ export function usePlaybackState({
     }
   }, [audiblePosition, beginRestore]);
 
+  const selectPlaybackRate = useCallback((rate: PlaybackRate) => {
+    setPlaybackRate(rate);
+  }, []);
+
   const changePlaybackRate = useCallback(
     (direction: "faster" | "slower") => {
       setPlaybackRate((currentRate) => nextPlaybackRate(currentRate, direction));
@@ -490,6 +494,7 @@ export function usePlaybackState({
       isPreparing: preparation !== null || isStartingPlayback,
       isPlayPending: preparation === "play" || isStartingPlayback,
       changePlaybackRate,
+      selectPlaybackRate,
       currentTime,
       duration,
       durationErrorMessage,
@@ -514,6 +519,7 @@ export function usePlaybackState({
       preparation,
       isStartingPlayback,
       changePlaybackRate,
+      selectPlaybackRate,
       currentTime,
       duration,
       durationErrorMessage,

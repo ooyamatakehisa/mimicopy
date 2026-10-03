@@ -19,7 +19,7 @@ export function AppHeader({
     <Surface
       as="header"
       className={cn(
-        "flex min-h-[82px] items-center justify-between gap-4 rounded-[2rem] p-4",
+        "flex min-h-[82px] items-center justify-between gap-4 rounded-[2rem] p-4 max-lg:min-h-0 max-lg:gap-2 max-lg:rounded-2xl max-lg:p-3",
         mobileActionsInline
           ? "max-lg:flex-row max-lg:items-center"
           : "max-lg:flex-col max-lg:items-stretch"
@@ -27,7 +27,7 @@ export function AppHeader({
     >
       <button
         className={cn(
-          "flex min-w-60 items-center gap-3 rounded-full bg-white/[0.03] p-1.5 pr-5 text-left transition hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal",
+          "flex min-w-60 items-center gap-3 rounded-full bg-white/[0.03] p-1.5 pr-5 text-left max-lg:min-h-11 max-lg:gap-2 max-lg:bg-transparent max-lg:p-0 transition hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-teal",
           mobileActionsInline
             ? "max-lg:min-w-0 max-lg:flex-1"
             : "max-lg:w-full"
@@ -36,14 +36,14 @@ export function AppHeader({
         title="ライブラリへ"
         onClick={onNavigateHome}
       >
-        <span className="grid size-11 shrink-0 place-items-center rounded-full border border-teal/30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.38),transparent_30%),linear-gradient(135deg,rgba(67,224,202,0.95),rgba(122,167,255,0.72))] text-base font-black text-[#061210] shadow-[0_14px_36px_rgba(67,224,202,0.2)]">
+        <span className="grid size-11 shrink-0 max-lg:size-8 place-items-center rounded-full border border-teal/30 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.38),transparent_30%),linear-gradient(135deg,rgba(67,224,202,0.95),rgba(122,167,255,0.72))] text-base font-black text-[#061210] shadow-[0_14px_36px_rgba(67,224,202,0.2)]">
           M
         </span>
         <span className="grid min-w-0 gap-1">
           <h1 className="m-0 text-xl font-semibold leading-none text-ink">
             Mimicopy
           </h1>
-          <span className={cn("truncate text-sm text-muted", !mobileActionsInline && "max-sm:whitespace-normal")}>
+          <span className={cn("truncate text-sm text-muted max-lg:hidden", !mobileActionsInline && "max-sm:whitespace-normal")}>
             {subtitle}
           </span>
         </span>

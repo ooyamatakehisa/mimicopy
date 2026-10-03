@@ -1,11 +1,8 @@
-import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, LoaderCircle, Pencil, X } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { AppHeader } from "../../components/layout/AppHeader";
-import { IconButton } from "../../components/ui/Button";
 import { SectionHeader, Surface } from "../../components/ui/Surface";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { TextInput } from "../../components/ui/TextInput";
 import { decodePeaksFromArrayBuffer } from "../../lib/audio";
 import { cn } from "../../lib/cn";
 import {
@@ -16,18 +13,16 @@ import {
   fetchTrack,
   fetchTrackMixer,
   retryTrackBeatAnalysis,
-  trackQueryKey,
-  updateTrackTitle
+  trackQueryKey
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
 import type { TrackDetail } from "../../lib/library";
-import { formatTime } from "../../lib/playback";
-import { cacheTrack } from "../../lib/trackQueryCache";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
 import { StemMixer } from "./StemMixer";
 import { TrackHeaderActions } from "./TrackHeaderActions";
+import { TrackHeading } from "./TrackHeading";
 import { TransportControls } from "./TransportControls";
 import { useAudioPitchShift } from "./useAudioPitchShift";
 import { useClickTrack } from "./useClickTrack";
@@ -194,12 +189,6 @@ function TrackEditor({
   track: TrackDetail;
 }) {
   const queryClient = useQueryClient();
-  const titleMutation = useMutation({
-    mutationFn: updateTrackTitle,
-    onSuccess: (updatedTrack) => {
-      cacheTrack(queryClient, updatedTrack);
-    }
-  });
   const beatGridQuery = useQuery({
     queryFn: () => fetchTrackBeatAnalysis(track.id),
     queryKey: beatGridQueryKey(track.id),
@@ -265,35 +254,8 @@ function TrackEditor({
     clickTrack.clickErrorMessage ??
     pitchShift.pitchShiftErrorMessage ??
     playback.durationErrorMessage;
-  const titleMessage = titleMutation.isPending
-    ? `${titleMutation.variables?.title.trim() ?? track.title} を保存しています。`
-    : titleMutation.isError
-      ? getErrorMessage(titleMutation.error, "表示名を保存できませんでした。")
-      : titleMutation.isSuccess
-        ? `${titleMutation.data.title} に変更しました。`
-        : null;
-  const description =
-    titleMessage ??
-    (markers.isSavingMarkers ? "マーカー保存中" : errorMessage ??
-      (!pitchShift.audioContext ? "音声処理を準備しています。" : null));
-
-  const renameTrack = async (title: string) => {
-    const trimmedTitle = title.trim();
-
-    if (!trimmedTitle || trimmedTitle === track.title) {
-      return true;
-    }
-
-    try {
-      await titleMutation.mutateAsync({
-        title: trimmedTitle,
-        trackId: track.id
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const description = markers.isSavingMarkers ? "マーカー保存中" : errorMessage ??
+    (!pitchShift.audioContext ? "音声処理を準備しています。" : null);
 
   const retryBeatAnalysis = () => {
     clickTrack.resetScheduledBeats();
@@ -304,38 +266,12 @@ function TrackEditor({
     <>
       <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback} />
       <KeyboardShortcuts markers={markers} playback={playback} />
-      <AppHeader
-        subtitle={`${track.title} ・ ${
-          markers.isSavingMarkers ? "マーカー保存中" : "保存済み"
-        }`}
-        actions={<TrackHeaderActions onBack={navigateToLibrary} />}
-        mobileActionsInline
-        onNavigateHome={navigateToLibrary}
-      />
-
       <Surface
-        className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[2.25rem] max-lg:contents"
+        className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden rounded-2xl max-lg:contents"
         aria-label="Audio editor"
       >
-        <SectionHeader
-          className="max-lg:rounded-[2rem] max-lg:border max-lg:border-white/10 max-lg:bg-surface/82 max-lg:shadow-soft max-lg:backdrop-blur-2xl"
-          title={track.title}
-          description={description}
-          action={
-            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
-              <TrackTitleActions
-                title={track.title}
-                isSaving={titleMutation.isPending}
-                onRename={renameTrack}
-                onStartEditing={titleMutation.reset}
-              />
-              <span className="whitespace-nowrap text-sm font-bold tabular-nums text-ink">
-                {formatTime(playback.currentTime)} /{" "}
-                {formatTime(playback.duration)}
-              </span>
-            </div>
-          }
-        />
+        <TrackHeading title={track.title} trackId={track.id} currentTime={playback.currentTime}
+          duration={playback.duration} message={description} onBack={navigateToLibrary} />
 
         <div
           className={cn(
@@ -374,6 +310,9 @@ function TrackEditor({
               }
               sortedMarkers={markers.sortedMarkers}
               waveformRange={waveform.waveformRange}
+              panWaveform={waveform.panWaveform}
+              followPlayback={waveform.followPlayback}
+              isFollowingPlayback={waveform.isFollowingPlayback}
             />
             <MarkerPanel markers={markers} playback={playback} />
           </div>
@@ -395,103 +334,5 @@ function TrackEditor({
         waveform={waveform}
       />
     </>
-  );
-}
-
-function TrackTitleActions({
-  isSaving,
-  onRename,
-  onStartEditing,
-  title
-}: {
-  isSaving: boolean;
-  onRename: (title: string) => Promise<boolean>;
-  onStartEditing: () => void;
-  title: string;
-}) {
-  const [draftTitle, setDraftTitle] = useState(title);
-  const [isEditing, setIsEditing] = useState(false);
-  const trimmedTitle = draftTitle.trim();
-
-  useEffect(() => {
-    if (!isEditing) {
-      setDraftTitle(title);
-    }
-  }, [isEditing, title]);
-
-  const startEditing = () => {
-    onStartEditing();
-    setDraftTitle(title);
-    setIsEditing(true);
-  };
-
-  const cancelEditing = () => {
-    setDraftTitle(title);
-    setIsEditing(false);
-  };
-
-  const saveTitle = async () => {
-    if (!trimmedTitle) {
-      return;
-    }
-
-    if (await onRename(trimmedTitle)) {
-      setDraftTitle(trimmedTitle);
-      setIsEditing(false);
-    }
-  };
-
-  if (!isEditing) {
-    return (
-      <IconButton title="表示名を編集" onClick={startEditing}>
-        <Pencil size={16} />
-      </IconButton>
-    );
-  }
-
-  return (
-    <div className="grid min-w-0 flex-1 grid-cols-[minmax(160px,260px)_auto_auto] items-center gap-2 max-sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-      <TextInput
-        aria-label={`${title} display name`}
-        autoFocus
-        className="h-10 rounded-2xl text-base font-semibold"
-        disabled={isSaving}
-        maxLength={180}
-        value={draftTitle}
-        onChange={(event) => setDraftTitle(event.target.value)}
-        onFocus={(event) => event.currentTarget.select()}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            void saveTitle();
-          }
-
-          if (event.key === "Escape") {
-            event.preventDefault();
-            cancelEditing();
-          }
-        }}
-      />
-      <IconButton
-        className="size-10"
-        disabled={!trimmedTitle || isSaving}
-        title="表示名を保存"
-        onClick={() => void saveTitle()}
-      >
-        {isSaving ? (
-          <LoaderCircle className="animate-spin" size={16} />
-        ) : (
-          <Check size={16} />
-        )}
-      </IconButton>
-      <IconButton
-        className="size-10"
-        disabled={isSaving}
-        title="表示名の編集をキャンセル"
-        onClick={cancelEditing}
-      >
-        <X size={16} />
-      </IconButton>
-    </div>
   );
 }

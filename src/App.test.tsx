@@ -305,10 +305,10 @@ describe("App", () => {
     speedDownButton.focus();
 
     fireEvent.keyDown(speedDownButton, { key: ",", shiftKey: true });
-    expect(screen.getByText("0.75x")).toBeVisible();
+    expect(within(speedControls).getByText("0.75x", { selector: "strong" })).toBeVisible();
 
     fireEvent.keyDown(speedDownButton, { key: ".", shiftKey: true });
-    expect(within(speedControls).getByText("1x")).toBeVisible();
+    expect(within(speedControls).getByText("1x", { selector: "strong" })).toBeVisible();
   });
 
   it("transposes between minus and plus six semitones and resets to zero", async () => {
@@ -371,7 +371,7 @@ describe("App", () => {
         shiftKey: true
       });
 
-      expect(within(speedControls).getByText("0.75x")).toBeVisible();
+      expect(within(speedControls).getByText("0.75x", { selector: "strong" })).toBeVisible();
       expect(windowListener).not.toHaveBeenCalled();
       expect(documentListener).not.toHaveBeenCalled();
     } finally {
@@ -417,7 +417,7 @@ describe("App", () => {
       expect(fireEvent.keyDown(speedDownButton, { key: "Enter" })).toBe(true);
       expect(playSpy).not.toHaveBeenCalled();
       fireEvent.click(speedDownButton);
-      expect(within(screen.getByLabelText("Playback speed")).getByText("0.75x")).toBeVisible();
+      expect(within(screen.getByLabelText("Playback speed")).getByText("0.75x", { selector: "strong" })).toBeVisible();
       expect(playSpy).not.toHaveBeenCalled();
       fireEvent.keyDown(speedDownButton, { key: "k" });
       await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
@@ -823,7 +823,7 @@ describe("App", () => {
 
     expect(
       within(screen.getByLabelText("Click track")).getByText(
-        "Analyzing track..."
+        "クリック音を解析中…"
       )
     ).toBeVisible();
     expect(screen.getByTitle("クリック音をオン/オフ")).toBeDisabled();
