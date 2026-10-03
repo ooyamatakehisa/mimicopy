@@ -49,7 +49,7 @@ export function StemMixer({
   return (
     <section
       aria-label="Audio mixer"
-      className="mx-4 mt-4 grid gap-3 rounded-[1.75rem] border border-white/8 bg-black/15 p-3 max-lg:order-2 max-lg:m-0 max-lg:gap-0"
+      className="mx-4 mt-4 grid gap-3 rounded-2xl border border-white/8 bg-black/15 p-3 max-lg:order-2 max-lg:m-0 max-lg:gap-0 max-lg:p-2"
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-1">
         <div className="hidden min-w-0 items-center gap-2 lg:flex">

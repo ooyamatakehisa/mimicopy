@@ -1,31 +1,11 @@
-import {
-  AudioLines,
-  Gauge,
-  MapPin,
-  Minus,
-  Music2,
-  Pause,
-  Play,
-  Plus,
-  RefreshCw,
-  Volume2,
-  VolumeX,
-  ZoomIn,
-  ZoomOut
-} from "lucide-react";
+import { Gauge, MapPin, Minus, Music2, Pause, Play, Plus, RefreshCw, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 import { Button, IconButton } from "../../components/ui/Button";
 import { Surface } from "../../components/ui/Surface";
 import type { BeatGrid, TrackBeatAnalysis } from "../../lib/beats";
-import {
-  formatWaveformZoom,
-  maxWaveformZoom,
-  minWaveformZoom
-} from "../../lib/waveform";
-import {
-  formatTransposeSemitones,
-  maxTransposeSemitones,
-  minTransposeSemitones
-} from "../../lib/transpose";
+import { cn } from "../../lib/cn";
+import { playbackRates } from "../../lib/playback";
+import { formatWaveformZoom, maxWaveformZoom, minWaveformZoom } from "../../lib/waveform";
+import { formatTransposeSemitones, maxTransposeSemitones, minTransposeSemitones } from "../../lib/transpose";
 import type { MarkersState } from "./useMarkersState";
 import type { ClickTrackState } from "./useClickTrack";
 import type { PlaybackState } from "./usePlaybackState";
@@ -47,199 +27,80 @@ type TransportControlsProps = {
   waveform: WaveformViewportState;
 };
 
-export function TransportControls({
-  beatAnalysis,
-  beatGrid,
-  beatGridErrorMessage,
-  clickTrack,
-  isAnalyzingBeatGrid,
-  isLoadingBeatGrid,
-  isPlaybackReady,
-  markers,
-  onRetryBeatAnalysis,
-  playback,
-  transpose,
-  waveform
-}: TransportControlsProps) {
-  const isAutomaticAnalysisPending =
+export function TransportControls({ beatAnalysis, beatGrid, beatGridErrorMessage, clickTrack,
+  isAnalyzingBeatGrid, isLoadingBeatGrid, isPlaybackReady, markers, onRetryBeatAnalysis,
+  playback, transpose, waveform }: TransportControlsProps) {
+  const isBeatAnalysisBusy = isAnalyzingBeatGrid || isLoadingBeatGrid ||
     beatAnalysis?.status === "queued" || beatAnalysis?.status === "running";
-  const isBeatAnalysisBusy =
-    isAnalyzingBeatGrid || isLoadingBeatGrid || isAutomaticAnalysisPending;
   const beatStatus = beatGrid
     ? `${beatGrid.beats.length} beats / ${beatGrid.downbeats.length} downbeats`
-    : beatGridErrorMessage ||
-      clickTrack.clickErrorMessage ||
-      (beatAnalysis?.status === "queued"
-        ? "Analysis queued"
-        : beatAnalysis?.status === "running"
-          ? "Analyzing track..."
-          : "Preparing analysis...");
+    : beatGridErrorMessage || clickTrack.clickErrorMessage || "クリック音を解析中…";
 
   return (
-    <Surface
-      as="footer"
-      className="flex min-h-[76px] flex-wrap items-center justify-between gap-4 rounded-full px-4 py-3 max-xl:rounded-[2rem] max-lg:order-1 max-lg:flex-col max-lg:items-stretch max-sm:gap-2 max-sm:px-3"
-    >
-      <div className="flex min-w-0 flex-wrap items-center gap-2 max-sm:grid max-sm:grid-cols-3 max-sm:[&>button]:min-w-0 max-sm:[&>button]:px-2">
-        <Button
-          size="transport"
-          variant="primary"
-          title={playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}
-          disabled={!isPlaybackReady}
-          onClick={playback.togglePlayback}
-        >
+    <Surface as="footer" aria-label="再生コントロール"
+      className="grid grid-cols-1 gap-2 rounded-2xl p-3 min-[380px]:grid-cols-2 max-lg:order-1 lg:flex lg:flex-wrap lg:items-center lg:gap-3">
+      <div className="col-span-full grid min-w-0 grid-cols-3 gap-2 lg:flex lg:flex-wrap">
+        <Button size="transport" className="min-w-0 gap-1 whitespace-nowrap px-2" variant="primary" title={playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}
+          disabled={!isPlaybackReady} onClick={playback.togglePlayback}>
           {playback.isPlaying || playback.isPlayPending ? <Pause size={21} /> : <Play size={21} />}
-          <span>{playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}</span>
+          {playback.isPlaying || playback.isPlayPending ? "停止" : "再生"}
         </Button>
-        {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="text-xs text-muted max-sm:order-last max-sm:col-span-3">再生位置を準備しています。</span> : null}
-        <Button
-          size="transport"
-          title="5秒戻る"
-          onClick={() => playback.seekBySeconds(-5)}
-        >
-          <span>-5s</span>
+        <Button size="transport" title="5秒戻る" onClick={() => playback.seekBySeconds(-5)}>-5s</Button>
+        <Button size="transport" title="5秒進む" onClick={() => playback.seekBySeconds(5)}>+5s</Button>
+        <Button size="transport" title="10秒戻る" onClick={() => playback.seekBySeconds(-10)}>-10s</Button>
+        <Button size="transport" title="10秒進む" onClick={() => playback.seekBySeconds(10)}>+10s</Button>
+        <Button size="transport" className="min-w-0 px-2" variant="accent" title="現在位置にマーカー追加"
+          onClick={() => markers.addMarkerAt(playback.currentTime, playback.duration)}>
+          <MapPin size={18} /><span>Marker</span>
         </Button>
-        <Button
-          size="transport"
-          title="5秒進む"
-          onClick={() => playback.seekBySeconds(5)}
-        >
-          <span>+5s</span>
-        </Button>
-        <Button
-          size="transport"
-          title="10秒戻る"
-          onClick={() => playback.seekBySeconds(-10)}
-        >
-          <span>-10s</span>
-        </Button>
-        <Button
-          size="transport"
-          title="10秒進む"
-          onClick={() => playback.seekBySeconds(10)}
-        >
-          <span>+10s</span>
-        </Button>
-        <Button
-          size="transport"
-          variant="accent"
-          title="現在位置にマーカー追加"
-          onClick={() =>
-            markers.addMarkerAt(playback.currentTime, playback.duration)
-          }
-        >
-          <MapPin size={18} />
-          <span>Marker</span>
-        </Button>
+        {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="col-span-full text-xs text-muted">再生位置を準備しています。</span> : null}
       </div>
 
-      <div
-        className="flex min-w-[300px] max-w-[520px] flex-1 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:min-w-0 max-lg:justify-start"
-        aria-label="Click track"
-      >
-        <AudioLines className="text-muted" size={18} aria-hidden="true" />
-        <IconButton
-          title="この曲のクリック解析を再実行"
-          disabled={isBeatAnalysisBusy}
-          onClick={onRetryBeatAnalysis}
-        >
-          <RefreshCw
-            className={isBeatAnalysisBusy ? "animate-spin" : undefined}
-            size={17}
-          />
-        </IconButton>
-        <Button
-          className="min-w-24"
-          size="transport"
-          variant={clickTrack.isClickEnabled ? "accent" : "secondary"}
-          title="クリック音をオン/オフ"
-          aria-pressed={clickTrack.isClickEnabled}
-          disabled={!beatGrid || isBeatAnalysisBusy}
-          onClick={clickTrack.toggleClickTrack}
-        >
-          {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          <span>Click</span>
+      <div className="track-setting col-span-full" aria-label="Playback speed">
+        <span className="px-1 text-xs font-medium text-muted lg:hidden">速度</span>
+        <Gauge className="hidden text-muted lg:block" size={18} aria-hidden="true" />
+        <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 lg:hidden">
+          {playbackRates.map((rate) => <Button key={rate} className="min-w-0 px-1 tabular-nums" aria-pressed={playback.playbackRate === rate}
+            variant={playback.playbackRate === rate ? "accent" : "secondary"} onClick={() => playback.selectPlaybackRate(rate)}>{rate}x</Button>)}
+        </div>
+        <IconButton className="hidden lg:inline-flex" title="速度を下げる" onClick={() => playback.changePlaybackRate("slower")}><Minus size={17} /></IconButton>
+        <strong className="sr-only min-w-11 text-center tabular-nums text-ink lg:not-sr-only">{playback.playbackRate}x</strong>
+        <IconButton className="hidden lg:inline-flex" title="速度を上げる" onClick={() => playback.changePlaybackRate("faster")}><Plus size={17} /></IconButton>
+      </div>
+
+      <div className="track-setting flex-wrap justify-between" aria-label="Waveform zoom">
+        <span className="w-full px-1 text-xs font-medium text-muted lg:hidden">波形ズーム</span>
+        <ZoomOut className="hidden text-muted lg:block" size={18} aria-hidden="true" />
+        <IconButton className="max-lg:size-11" title="波形を縮小" disabled={waveform.waveformZoom <= minWaveformZoom}
+          onClick={() => waveform.changeWaveformZoom("out")}><ZoomOut size={17} /></IconButton>
+        <strong className="min-w-0 flex-1 text-center tabular-nums text-ink">{formatWaveformZoom(waveform.waveformZoom)}</strong>
+        <IconButton className="max-lg:size-11" title="波形を拡大" disabled={waveform.waveformZoom >= maxWaveformZoom}
+          onClick={() => waveform.changeWaveformZoom("in")}><ZoomIn size={17} /></IconButton>
+      </div>
+
+      <div className="track-setting flex-wrap justify-between" aria-label="Transpose">
+        <span className="w-full px-1 text-xs font-medium text-muted lg:hidden">キー（半音）</span>
+        <Music2 className="hidden text-muted lg:block" size={18} aria-hidden="true" />
+        <IconButton className="max-lg:size-11" title="半音下げる" disabled={transpose.semitones <= minTransposeSemitones}
+          onClick={() => transpose.changeTranspose("down")}><Minus size={17} /></IconButton>
+        <Button className="min-w-11 px-1 tabular-nums" title="転調を0に戻す"
+          aria-label={`転調 ${formatTransposeSemitones(transpose.semitones)} 半音。0に戻す`} onClick={transpose.resetTranspose}>
+          {formatTransposeSemitones(transpose.semitones)}
         </Button>
-        <strong className="min-w-0 flex-1 truncate text-center text-xs font-semibold text-muted">
-          {isLoadingBeatGrid ? "Loading analysis..." : beatStatus}
-        </strong>
+        <IconButton className="max-lg:size-11" title="半音上げる" disabled={transpose.semitones >= maxTransposeSemitones}
+          onClick={() => transpose.changeTranspose("up")}><Plus size={17} /></IconButton>
       </div>
 
-      <div
-        className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
-        aria-label="Waveform zoom"
-      >
-        <ZoomOut className="text-muted" size={18} aria-hidden="true" />
-        <IconButton
-          title="波形を縮小"
-          disabled={waveform.waveformZoom <= minWaveformZoom}
-          onClick={() => waveform.changeWaveformZoom("out")}
-        >
-          <ZoomOut size={17} />
-        </IconButton>
-        <strong className="min-w-11 text-center tabular-nums text-ink">
-          {formatWaveformZoom(waveform.waveformZoom)}
-        </strong>
-        <IconButton
-          title="波形を拡大"
-          disabled={waveform.waveformZoom >= maxWaveformZoom}
-          onClick={() => waveform.changeWaveformZoom("in")}
-        >
-          <ZoomIn size={17} />
-        </IconButton>
-      </div>
-
-      <div
-        className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
-        aria-label="Transpose"
-      >
-        <Music2 className="text-muted" size={18} aria-hidden="true" />
-        <IconButton
-          title="半音下げる"
-          disabled={transpose.semitones <= minTransposeSemitones}
-          onClick={() => transpose.changeTranspose("down")}
-        >
-          <Minus size={17} />
-        </IconButton>
-        <Button
-          className="h-10 min-w-12 px-2 tabular-nums"
-          title="転調を0に戻す"
-          aria-label={`転調 ${formatTransposeSemitones(
-            transpose.semitones
-          )} 半音。0に戻す`}
-          onClick={transpose.resetTranspose}
-        >
-          <strong>{formatTransposeSemitones(transpose.semitones)}</strong>
+      <div className="track-setting col-span-full flex-wrap" aria-label="Click track">
+        <Button className="min-w-0 flex-1 lg:flex-none" size="transport" variant={clickTrack.isClickEnabled ? "accent" : "secondary"}
+          title="クリック音をオン/オフ" aria-pressed={clickTrack.isClickEnabled} disabled={!beatGrid || isBeatAnalysisBusy}
+          onClick={clickTrack.toggleClickTrack}>
+          {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}<span>Click</span>
         </Button>
-        <IconButton
-          title="半音上げる"
-          disabled={transpose.semitones >= maxTransposeSemitones}
-          onClick={() => transpose.changeTranspose("up")}
-        >
-          <Plus size={17} />
+        <IconButton className="max-lg:size-11" title="この曲のクリック解析を再実行" disabled={isBeatAnalysisBusy} onClick={onRetryBeatAnalysis}>
+          <RefreshCw className={isBeatAnalysisBusy ? "animate-spin" : undefined} size={17} />
         </IconButton>
-      </div>
-
-      <div
-        className="flex min-w-44 items-center justify-end gap-2 rounded-full border border-white/8 bg-white/[0.04] p-1 max-lg:w-full max-lg:justify-start"
-        aria-label="Playback speed"
-      >
-        <Gauge className="text-muted" size={18} aria-hidden="true" />
-        <IconButton
-          title="速度を下げる"
-          onClick={() => playback.changePlaybackRate("slower")}
-        >
-          <span>,</span>
-        </IconButton>
-        <strong className="min-w-11 text-center tabular-nums text-ink">
-          {playback.playbackRate}x
-        </strong>
-        <IconButton
-          title="速度を上げる"
-          onClick={() => playback.changePlaybackRate("faster")}
-        >
-          <span>.</span>
-        </IconButton>
+        <span className={cn("min-w-0 text-xs text-muted", beatGrid ? "max-lg:sr-only" : "w-full lg:w-auto")}>{beatStatus}</span>
       </div>
     </Surface>
   );

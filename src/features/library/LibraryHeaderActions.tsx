@@ -92,7 +92,7 @@ export function LibraryHeaderActions({
         <Link className="text-muted" size={18} aria-hidden="true" />
         <input
           id="youtube-url"
-          className="min-w-0 bg-transparent text-sm text-ink outline-none placeholder:text-quiet"
+          className="min-w-0 bg-transparent text-sm text-ink max-lg:text-base outline-none placeholder:text-quiet"
           type="url"
           inputMode="url"
           placeholder="https://www.youtube.com/watch?v=..."
@@ -105,7 +105,7 @@ export function LibraryHeaderActions({
         <select
           id="youtube-target-stem"
           aria-label="分離する楽器"
-          className="h-9 max-w-36 rounded-full border border-white/10 bg-[#17201f] px-3 text-sm text-ink outline-none focus:border-teal/55 max-sm:col-start-2 max-sm:row-start-2 max-sm:max-w-none"
+          className="h-9 max-lg:h-11 max-lg:text-base max-w-36 rounded-full border border-white/10 bg-[#17201f] px-3 text-sm text-ink outline-none focus:border-teal/55 max-sm:col-start-2 max-sm:row-start-2 max-sm:max-w-none"
           value={targetStem ?? ""}
           onChange={(event) => {
             const value = event.target.value;

@@ -34,6 +34,13 @@ function usesNativeActivation(event: KeyboardEvent) {
   );
 }
 
+function usesSliderNavigation(event: KeyboardEvent) {
+  return event.shiftKey &&
+    (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+    event.target instanceof HTMLElement &&
+    Boolean(event.target.closest("[role='slider']"));
+}
+
 export function KeyboardShortcuts({
   markers,
   playback
@@ -58,7 +65,8 @@ export function KeyboardShortcuts({
       if (
         event.defaultPrevented ||
         isTextEntryTarget(event.target) ||
-        usesNativeActivation(event)
+        usesNativeActivation(event) ||
+        usesSliderNavigation(event)
       ) {
         return;
       }

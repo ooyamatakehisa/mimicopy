@@ -196,6 +196,14 @@ export function centerWaveformRange(
   ).start;
 }
 
+/** A positive fraction moves the viewport toward the end, without seeking. */
+export function panWaveformRange(duration: number, zoom: number, viewportStart: number, fraction: number) {
+  const range = getWaveformRange(duration, zoom, viewportStart);
+  if (!Number.isFinite(fraction)) return range.start;
+  return getWaveformRange(duration, zoom,
+    range.start + (range.end - range.start) * fraction).start;
+}
+
 export function keepTimeInWaveformRange(
   time: number,
   duration: number,

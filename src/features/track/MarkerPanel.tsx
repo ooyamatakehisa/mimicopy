@@ -71,14 +71,16 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
 
   return (
     <aside
-      className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04] max-lg:order-3 max-lg:min-h-[330px]"
+      className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-2xl border border-white/8 bg-white/[0.04] max-lg:order-3"
       aria-label="Markers"
     >
       <SectionHeader
+        className="min-h-0 px-3 py-2 max-sm:flex max-sm:items-center max-sm:px-3"
         title="Markers"
-        description={markers.selectedMarker ? markers.selectedMarker.label : "No selection"}
+        description={markers.selectedMarker?.label}
         action={
           <IconButton
+            className="size-11"
             title="選択マーカーへ戻る"
             disabled={markers.sortedMarkers.length === 0}
             onClick={returnToMarker}
@@ -88,7 +90,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
         }
       />
 
-      <div className="mx-3 grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-[1.5rem] border border-white/8 bg-black/18 p-2.5 focus-within:border-teal/55 focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)] max-sm:grid-cols-1">
+      <div className="mx-3 grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-black/18 p-2 focus-within:border-teal/55 focus-within:shadow-[0_0_0_4px_rgba(67,224,202,0.1)]">
         <MapPin className="text-muted" size={18} aria-hidden="true" />
         <label className="sr-only" htmlFor="marker-time">
           Marker time
@@ -100,12 +102,14 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
           placeholder="1:23"
         />
         <IconButton
+          className="size-11"
           title="現在位置を入力"
           onClick={() => setMarkerInput(formatTime(playback.currentTime))}
         >
           <Clock3 size={18} />
         </IconButton>
         <IconButton
+          className="size-11"
           variant="accent"
           title="入力時刻にマーカー追加"
           onClick={addMarkerFromInput}
@@ -116,7 +120,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
 
       <div className="min-h-0 overflow-auto p-3">
         {markers.sortedMarkers.length === 0 ? (
-          <div className="grid min-h-32 place-items-center rounded-[1.5rem] border border-dashed border-white/14 bg-white/[0.035] text-center text-quiet">
+          <div className="grid min-h-14 place-items-center text-center text-sm text-muted lg:min-h-32">
             No markers
           </div>
         ) : (
@@ -124,15 +128,15 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
             <div
               key={marker.id}
               className={cn(
-                "mb-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-[1.5rem] border border-white/8 bg-white/[0.055] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight max-sm:grid-cols-1",
+                "mb-2 grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-xl border border-white/8 bg-white/[0.055] transition-[background,border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-white/16 hover:bg-white/[0.075] hover:shadow-tight max-lg:grid-cols-[minmax(0,1fr)_68px_44px_44px] max-lg:gap-1 max-lg:p-1",
                 marker.id === markers.selectedMarkerId &&
                   "border-coral/45 bg-coral/12"
               )}
             >
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_80px] items-center gap-2 py-2 pl-2 max-sm:grid-cols-1 max-sm:p-2">
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_80px] items-center gap-2 py-2 pl-2 max-lg:contents">
                 <TextInput
                   aria-label={`${marker.label} label`}
-                  className="markerLabelInput"
+                  className="markerLabelInput rounded-lg px-2"
                   value={marker.label}
                   onBlur={() => markers.finishRenamingMarker(marker.id)}
                   onChange={(event) =>
@@ -141,7 +145,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
                 />
                 <TextInput
                   aria-label={`${marker.label} time`}
-                  className="markerTimeInput text-right tabular-nums"
+                  className="markerTimeInput rounded-lg px-1 text-right tabular-nums"
                   inputMode="numeric"
                   value={
                     markerTimeDrafts[marker.id] ?? formatTime(marker.time)
@@ -153,7 +157,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
                 />
               </div>
               <IconButton
-                className="max-sm:w-full"
+                className="max-lg:size-11"
                 title="マーカーへ移動"
                 onClick={() => {
                   markers.selectMarker(marker.id);
@@ -163,7 +167,7 @@ export function MarkerPanel({ markers, playback }: MarkerPanelProps) {
                 <MapPin size={17} />
               </IconButton>
               <IconButton
-                className="mr-2 max-sm:mx-2 max-sm:mb-2 max-sm:w-auto"
+                className="mr-2 max-lg:mr-0 max-lg:size-11"
                 variant="danger"
                 title="マーカー削除"
                 onClick={() => {

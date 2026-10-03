@@ -64,6 +64,10 @@
 }
 
 @layer components {
+  .track-setting {
+    @apply flex min-w-0 items-center gap-1 rounded-xl border border-line bg-white/[0.025] p-1 lg:min-w-44 lg:gap-2;
+  }
+
   .library-nav {
     @apply flex min-h-11 w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal;
   }

@@ -290,7 +290,7 @@ async function mockYoutubeConversion(page: Page, title = "Mock YouTube Track") {
 
 test("loads audio and supports the main playback and marker workflow", async ({
   page
-}) => {
+}, testInfo) => {
   await page.route("**/api/tracks/*/beat-grid", async (route) => {
     await route.fulfill({
       body: JSON.stringify(createCompletedBeatAnalysis()),
@@ -323,7 +323,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
   ).toBeVisible();
   const trackId = new URL(page.url()).pathname.split("/").at(-1);
 
-  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText("1x");
   await expect(page.getByLabel("Transpose")).toContainText("0");
   await expect(page.getByLabel("Waveform zoom")).toContainText("1x");
   await expectWaveformCanvas(page);
@@ -400,11 +400,11 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.getByTitle("速度を下げる").focus();
   for (const speed of ["0.75x", "0.5x", "0.25x"]) {
     await page.keyboard.press("Shift+Comma");
-    await expect(page.getByLabel("Playback speed")).toContainText(speed);
+    await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText(speed);
   }
   for (const speed of ["0.5x", "0.75x", "1x"]) {
     await page.keyboard.press("Shift+Period");
-    await expect(page.getByLabel("Playback speed")).toContainText(speed);
+    await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText(speed);
   }
 
   await page.getByTitle("半音上げる").click();
@@ -438,8 +438,14 @@ test("loads audio and supports the main playback and marker workflow", async ({
       page.evaluate(() => document.querySelector("audio")?.currentTime ?? -1)
     )
     .toBeLessThan(0.1);
+  await page.setViewportSize({ width: 320, height: 568 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  await page.getByLabel("Marker 1 label").fill("Practice cue");
+  await expect(page.getByLabel("Practice cue time")).toHaveValue("0:00");
+  await page.screenshot({ path: testInfo.outputPath("mobile-marker-320.png"), fullPage: true });
   await page.getByTitle("マーカー削除").click();
   await expect(page.getByText("No markers")).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByTitle("再生").focus();
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("KeyM");
@@ -455,7 +461,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
 
   expect(trackId).toBeTruthy();
   await page.goto(`/tracks/${trackId}`);
-  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText("1x");
   await expect(page.getByLabel("Click track")).toContainText(
     "3 beats / 1 downbeats"
   );
@@ -471,6 +477,9 @@ test("loads audio and supports the main playback and marker workflow", async ({
     .fill("Practice loop");
   await uploadedTrackRow.getByTitle("表示名を保存").click();
   await expect(uploadedTrackRow).toContainText("Practice loop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: testInfo.outputPath("mobile-library.png"), fullPage: true });
 
   page.once("dialog", (dialog) => dialog.accept());
   await uploadedTrackRow.getByTitle("保存済みMP3を削除").click();
@@ -490,7 +499,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect(page).toHaveURL("/tracks/e2e-youtube-track");
   await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await expect(page.getByText("Mock YouTube Track を読み込みました。")).toHaveCount(0);
-  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
 
@@ -705,7 +714,7 @@ test("converts a real playlist-backed YouTube URL", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/tracks\/[^/]+$/, { timeout: 90_000 });
   await expect(page.getByTitle("再生", { exact: true })).toBeEnabled({ timeout: 30_000 });
-  await expect(page.getByLabel("Playback speed")).toContainText("1x");
+  await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText("1x");
   await expectWaveformCanvas(page);
   await expectInitialPlaybackPosition(page);
 
@@ -745,6 +754,9 @@ test.describe("mobile track editor", () => {
     const mixer = page.getByLabel("Audio mixer", { exact: true });
     const toggle = mixer.getByRole("button", { name: "Audio mixer", exact: true });
     await expect(play).toBeEnabled();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+    const heading = await page.getByLabel("曲の情報").boundingBox();
+    expect(heading?.height).toBeLessThan(90);
     await expectWaveformCanvas(page);
     await expect(page.getByLabel("Waveform", { exact: true })).not.toContainText("ready");
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -834,6 +846,10 @@ test.describe("mobile track editor", () => {
     await end();
     await expect(waveform).toHaveAttribute("aria-valuenow", "5");
 
+    await expect(page.getByLabel("Waveform zoom")).toContainText("1.25x");
+    await page.getByTitle("波形を縮小", { exact: true }).tap();
+    await page.evaluate(() => window.scrollTo(0, 0));
+
     // A drag that returns to its origin is not a tap, including mouse input.
     await page.mouse.move(x + 60, y);
     await page.mouse.down();
@@ -848,4 +864,78 @@ test.describe("mobile track editor", () => {
     await page.touchscreen.tap(x, y);
     await expect(waveform).toHaveAttribute("aria-valuenow", "5");
   });
+  test("pans zoomed audio horizontally without seeking and keeps vertical scrolling", async ({ page, context }) => {
+    await mockYoutubeConversion(page);
+    await page.goto("/tracks/e2e-youtube-track");
+    await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+    const waveform = page.getByRole("slider", { name: "再生位置" });
+    const box = await waveform.boundingBox();
+    if (!box) throw new Error("Missing waveform");
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    const client = await context.newCDPSession(page);
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x - 40, y }, { x: x + 40, y }] });
+    await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 80, y }, { x: x + 80, y }] });
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(page.getByLabel("Waveform zoom")).toContainText("2x");
+    const range = page.getByLabel("波形の表示範囲");
+    await expect(range).toHaveText("0:00 – 0:10");
+    const swipe = async (dx: number, dy: number) => {
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x + 70, y }] });
+      for (const fraction of [0.25, 0.5, 0.75, 1]) {
+        await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + 70 + dx * fraction, y: y + dy * fraction }] });
+      }
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+    await swipe(-120, 0);
+    await expect(range).not.toHaveText("0:00 – 0:10");
+    await expect(waveform).toHaveAttribute("aria-valuenow", "0");
+    await expect(page.getByTitle("再生位置を追従")).toHaveAttribute("aria-pressed", "false");
+    const inspectedRange = await range.textContent();
+    await page.getByTitle("再生", { exact: true }).tap();
+    await expect(page.getByTitle("停止", { exact: true })).toBeVisible();
+    await expect.poll(() => page.locator("audio").evaluate((audio) => (audio as HTMLAudioElement).currentTime)).toBeGreaterThan(0.3);
+    await expect(range).toHaveText(inspectedRange ?? "");
+    await page.getByTitle("停止", { exact: true }).tap();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await swipe(0, -90);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(20);
+    await expect(range).toHaveText(inspectedRange ?? "");
+    await page.getByTitle("波形を右へ").click();
+    await page.getByTitle("波形を右へ").click();
+    await expect(page.getByTitle("波形を右へ")).toBeDisabled();
+    await expect(range).toHaveText("0:10 – 0:20");
+    await waveform.focus();
+    await page.keyboard.press("Shift+ArrowLeft");
+    await expect(range).toHaveText("0:05 – 0:15");
+    await page.getByTitle("再生位置を追従").tap();
+    await expect(range).toHaveText("0:00 – 0:10");
+    await expect(page.getByTitle("再生位置を追従")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("selects slower and faster rates by touch and changes the actual media clock", async ({ page }) => {
+    await mockYoutubeConversion(page);
+    await page.goto("/tracks/e2e-youtube-track");
+    await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+    const speed = page.getByLabel("Playback speed");
+    await speed.getByRole("button", { name: "0.25x", exact: true }).tap();
+    await page.getByTitle("再生", { exact: true }).tap();
+    for (const rate of [0.25, 0.5, 0.75, 1, 0.5, 1]) {
+      await speed.getByRole("button", { name: `${rate}x`, exact: true }).tap();
+      await expect(speed.getByRole("button", { name: `${rate}x`, exact: true })).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByLabel("Playback preparation", { exact: true })).toHaveCount(0, { timeout: 16000 });
+      await expect.poll(() => page.locator("audio").evaluate((element) => {
+        const audio = element as HTMLAudioElement;
+        return audio.paused ? 0 : audio.playbackRate;
+      })).toBe(rate);
+      const sample = () => page.locator("audio").evaluate((element) => ({
+        time: (element as HTMLAudioElement).currentTime, wall: performance.now()
+      }));
+      const before = await sample();
+      await page.waitForTimeout(800);
+      const after = await sample();
+      expect(Math.abs((after.time - before.time) / ((after.wall - before.wall) / 1000) - rate)).toBeLessThan(0.08);
+    }
+    await page.getByTitle("停止", { exact: true }).tap();
+  });
+
 });

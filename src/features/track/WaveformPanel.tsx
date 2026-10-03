@@ -11,8 +11,9 @@ import {
   type WaveformRange
 } from "../../lib/waveform";
 import type { DynamicStyle } from "./types";
-import { useWaveformZoomGestures } from "./useWaveformZoomGestures";
-import { useWaveformSeekGesture } from "./useWaveformSeekGesture";
+import { ChevronLeft, ChevronRight, LocateFixed } from "lucide-react";
+import { IconButton } from "../../components/ui/Button";
+import { useWaveformGestures } from "./useWaveformGestures";
 
 type WaveformPanelProps = {
   beatGrid: BeatGrid | null;
@@ -27,6 +28,9 @@ type WaveformPanelProps = {
   scaleWaveformZoomContinuously: (scale: number) => void;
   sortedMarkers: Marker[];
   waveformRange: WaveformRange;
+  panWaveform: (fraction: number) => void;
+  followPlayback: () => void;
+  isFollowingPlayback: boolean;
 };
 
 function drawBeatGridLines({
@@ -96,7 +100,10 @@ export function WaveformPanel({
   selectedMarkerId,
   scaleWaveformZoomContinuously,
   sortedMarkers,
-  waveformRange
+  waveformRange,
+  panWaveform,
+  followPlayback,
+  isFollowingPlayback
 }: WaveformPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
@@ -104,10 +111,7 @@ export function WaveformPanel({
   const [draggingMarkerId, setDraggingMarkerId] = useState<string | null>(null);
   const [waveformSize, setWaveformSize] = useState({ height: 0, width: 0 });
 
-  useWaveformZoomGestures({
-    onScale: scaleWaveformZoomContinuously,
-    targetRef: waveformRef
-  });
+  const canPan = waveformRange.end - waveformRange.start < duration;
 
   const visibleMarkers = useMemo(
     () =>
@@ -145,7 +149,8 @@ export function WaveformPanel({
     [duration, seekTo, waveformRange]
   );
 
-  useWaveformSeekGesture({ onSeek: seekFromPointer, targetRef: waveformRef });
+  useWaveformGestures({ onSeek: seekFromPointer, onPan: panWaveform,
+    onScale: scaleWaveformZoomContinuously, canPan, targetRef: waveformRef });
 
   const moveMarkerFromPointer = useCallback(
     (markerId: string, clientX: number) => {
@@ -316,20 +321,28 @@ export function WaveformPanel({
 
   return (
     <section
-      className="flex min-h-0 flex-col overflow-hidden rounded-[2rem] border border-white/8 bg-white/[0.04]"
+      className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/8 bg-white/[0.04]"
       aria-label="Waveform"
     >
       {message ? <p role="alert" className="mx-4 mt-3 text-sm text-danger">{message}</p> : null}
 
       <div
         ref={waveformRef}
-        className="waveformSurface relative m-3 h-[clamp(120px,22svh,180px)] min-h-0 shrink-0 cursor-crosshair overflow-hidden rounded-[1.75rem] border border-white/8 bg-[radial-gradient(circle_at_15%_10%,rgba(67,224,202,0.16),transparent_24%),radial-gradient(circle_at_85%_90%,rgba(255,138,101,0.12),transparent_25%),linear-gradient(rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(180deg,#111816_0%,#070908_100%)] bg-[length:auto,auto,100%_25%,84px_100%,auto] outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-[1.75rem] after:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%,rgba(0,0,0,0.18))] focus-visible:shadow-[inset_0_0_0_2px_rgba(122,167,255,0.72)] sm:h-[clamp(160px,28svh,260px)] lg:h-[clamp(320px,48vh,580px)]"
+        className="waveformSurface relative m-2 touch-pan-y select-none h-[clamp(120px,22svh,180px)] min-h-0 shrink-0 cursor-crosshair overflow-hidden rounded-xl border border-white/8 bg-[radial-gradient(circle_at_15%_10%,rgba(67,224,202,0.16),transparent_24%),radial-gradient(circle_at_85%_90%,rgba(255,138,101,0.12),transparent_25%),linear-gradient(rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(244,247,245,0.045)_1px,transparent_1px),linear-gradient(180deg,#111816_0%,#070908_100%)] bg-[length:auto,auto,100%_25%,84px_100%,auto] outline-none after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%,rgba(0,0,0,0.18))] focus-visible:shadow-[inset_0_0_0_2px_rgba(122,167,255,0.72)] sm:h-[clamp(160px,28svh,260px)] lg:h-[clamp(320px,48vh,580px)]"
         role="slider"
         aria-label="再生位置"
         aria-valuemin={0}
         aria-valuemax={Math.max(0, Math.floor(duration))}
         aria-valuenow={Math.floor(currentTime)}
-        title="タップでシーク・ピンチで波形をズーム"
+        title="タップでシーク・横ドラッグで移動・ピンチでズーム"
+        aria-valuetext={formatTime(currentTime)}
+        onKeyDown={(event) => {
+          if (canPan && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+            event.preventDefault();
+            event.stopPropagation();
+            panWaveform(event.key === "ArrowLeft" ? -0.5 : 0.5);
+          }
+        }}
         tabIndex={0}
       >
         <canvas ref={canvasRef} className="block size-full" />
@@ -348,11 +361,28 @@ export function WaveformPanel({
             draggingMarkerIdRef={draggingMarkerIdRef}
           />
         ))}
-        <div
+        {currentTime >= waveformRange.start && currentTime <= waveformRange.end ? <div
           className="pointer-events-none absolute inset-y-0 left-[var(--playhead-left)] z-30 w-0.5 bg-teal shadow-[0_0_0_1px_rgba(7,16,15,0.78),0_0_24px_rgba(67,224,202,0.48)]"
           style={playheadStyle}
-        />
+        /> : null}
       </div>
+      {canPan ? (
+        <div className="mx-2 mb-1 flex min-h-11 items-center justify-between gap-1">
+          <IconButton className="size-11" title="波形を左へ" disabled={waveformRange.start <= 0} onClick={() => panWaveform(-0.5)}>
+            <ChevronLeft size={18} />
+          </IconButton>
+          <output aria-label="波形の表示範囲" aria-live="off" className="min-w-0 text-xs tabular-nums text-muted">
+            {formatTime(waveformRange.start)} – {formatTime(waveformRange.end)}
+          </output>
+          <IconButton className="size-11" title="再生位置を追従" aria-pressed={isFollowingPlayback}
+            variant={isFollowingPlayback ? "accent" : "secondary"} onClick={followPlayback}>
+            <LocateFixed size={18} />
+          </IconButton>
+          <IconButton className="size-11" title="波形を右へ" disabled={waveformRange.end >= duration} onClick={() => panWaveform(0.5)}>
+            <ChevronRight size={18} />
+          </IconButton>
+        </div>
+      ) : null}
     </section>
   );
 }
