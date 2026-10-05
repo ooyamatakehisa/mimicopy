@@ -1,3 +1,4 @@
+import type { AutoNextTrack } from "./useAutoNextTrack";
 import { Gauge, MapPin, Minus, Music2, Pause, Play, Plus, RefreshCw, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 import { Button, IconButton } from "../../components/ui/Button";
 import { Surface } from "../../components/ui/Surface";
@@ -13,6 +14,7 @@ import type { TransposeState } from "./useTranspose";
 import type { WaveformViewportState } from "./useWaveformViewport";
 
 type TransportControlsProps = {
+  autoNext: AutoNextTrack;
   beatAnalysis: TrackBeatAnalysis | null;
   beatGrid: BeatGrid | null;
   beatGridErrorMessage: string | null;
@@ -27,7 +29,7 @@ type TransportControlsProps = {
   waveform: WaveformViewportState;
 };
 
-export function TransportControls({ beatAnalysis, beatGrid, beatGridErrorMessage, clickTrack,
+export function TransportControls({ autoNext, beatAnalysis, beatGrid, beatGridErrorMessage, clickTrack,
   isAnalyzingBeatGrid, isLoadingBeatGrid, isPlaybackReady, markers, onRetryBeatAnalysis,
   playback, transpose, waveform }: TransportControlsProps) {
   const isBeatAnalysisBusy = isAnalyzingBeatGrid || isLoadingBeatGrid ||
@@ -55,6 +57,14 @@ export function TransportControls({ beatAnalysis, beatGrid, beatGridErrorMessage
         </Button>
         {playback.isPreparing ? <span role="status" aria-label="Playback preparation" className="col-span-full text-xs text-muted">再生位置を準備しています。</span> : null}
       </div>
+
+      <label className="track-setting col-span-full flex-wrap text-sm">
+        <input type="checkbox" className="library-checkbox" checked={autoNext.enabled}
+          onChange={(event) => autoNext.setEnabled(event.target.checked)}
+          aria-label="次の曲を自動再生" aria-describedby="auto-next-description playback-keyboard-help" />
+        <span>次の曲を自動再生</span>
+        <span id="auto-next-description" className="w-full text-xs text-muted">{autoNext.description}</span>
+      </label>
 
       <div className="track-setting col-span-full" aria-label="Playback speed">
         <span className="px-1 text-xs font-medium text-muted lg:hidden">速度</span>
@@ -102,6 +112,9 @@ export function TransportControls({ beatAnalysis, beatGrid, beatGridErrorMessage
         </IconButton>
         <span className={cn("min-w-0 text-xs text-muted", beatGrid ? "max-lg:sr-only" : "w-full lg:w-auto")}>{beatStatus}</span>
       </div>
+      <p id="playback-keyboard-help" className="col-span-full text-xs text-muted lg:basis-full">
+        Space / Enter / K：再生・停止 · Alt + Enter：フォーカス中の操作を実行
+      </p>
     </Surface>
   );
 }

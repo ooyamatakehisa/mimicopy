@@ -1,3 +1,4 @@
+import type { PlaybackQueue } from "../../lib/playbackQueue";
 import { useSearchParams } from "react-router";
 import { AppHeader } from "../../components/layout/AppHeader";
 import type { LibraryScope } from "../../lib/folders";
@@ -11,7 +12,7 @@ import { useFolders } from "./useFolders";
 type LibraryPageProps = {
   activeTrackId: string | null;
   navigateToLibrary: () => void;
-  navigateToTrack: (trackId: string) => void;
+  navigateToTrack: (trackId: string, queue?: PlaybackQueue) => void;
 };
 
 export function LibraryPage({

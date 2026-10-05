@@ -14,24 +14,9 @@ function isTextEntryTarget(target: EventTarget | null) {
     return false;
   }
 
-  return Boolean(
-    target.closest("input, textarea, select, [contenteditable='true']")
-  );
-}
-
-function usesNativeActivation(event: KeyboardEvent) {
-  if (!(event.target instanceof HTMLElement)) {
-    return false;
-  }
-
-  if (event.key !== " " && event.key !== "Enter") {
-    return false;
-  }
-
-  return Boolean(
-    event.target.closest("button, [role='button'], summary") ||
-      (event.key === "Enter" && event.target.closest("a[href], [role='link']"))
-  );
+  const input = target.closest("input");
+  if (input && !["button", "submit", "reset", "checkbox", "radio", "range"].includes(input.type)) return true;
+  return Boolean(target.closest("textarea, select, [contenteditable]:not([contenteditable='false'])"));
 }
 
 function usesSliderNavigation(event: KeyboardEvent) {
@@ -64,11 +49,24 @@ export function KeyboardShortcuts({
     (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
+        event.isComposing ||
         isTextEntryTarget(event.target) ||
-        usesNativeActivation(event) ||
         usesSliderNavigation(event)
       ) {
         return;
+      }
+
+      // Keep every control reachable by keyboard while reserving unmodified
+      // transport keys for playback, including after a pointer click.
+      if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === "Enter" &&
+          event.target instanceof HTMLElement) {
+        const control = event.target.closest<HTMLElement>("button, [role='button'], a[href], summary, input[type='checkbox'], input[type='radio']");
+        if (control) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!event.repeat) control.click();
+          return;
+        }
       }
 
       const command = getShortcutCommand(event);
@@ -80,6 +78,8 @@ export function KeyboardShortcuts({
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
+
+      if (event.repeat && (command.type === "togglePlayback" || command.type === "addMarker")) return;
 
       if (command.type === "togglePlayback") {
         playback.togglePlayback();

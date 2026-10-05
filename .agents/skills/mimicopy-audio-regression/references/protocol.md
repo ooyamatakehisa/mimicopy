@@ -32,7 +32,7 @@ The runner executes calibration and every browser/suite sequentially. Quick runs
 | MP3 additional | 15 | Each source solo at 0/25/50/75/100% volume |
 | MP3 additional | 2 | 20 play/pause cycles with 30ms or 100ms gaps |
 | MP3 additional | 32 | ±6 semitones × four speeds × all sources / each solo |
-| Desktop keyboard | 12 per run | Each of 6 buttons using Enter and Space; toggle and unintended transport change |
+| Desktop keyboard | 12 per run | Each of 6 focused buttons using Enter and Space; playback toggles and mixer state is unchanged |
 | Desktop edges | 5 | Cold graph initialization delays, delayed shared media plus rapid transport, 404 shared media, real tab visibility if supported |
 
 WAV full = 852 captures; MP3 additional = 105. Both desktop engines = 1,914 automatic captures. Adding both native iOS suites gives 2,871. These totals exclude keyboard checks, edge observations, calibration, and manual touch. Do not call all possible operation sequences or all devices tested. The v2 audit uses synthetic WAV/MP3 inputs converted by the production six-channel mixer generator. Its supplementary suite includes nonzero transposition; arbitrary user music is not covered.
@@ -96,7 +96,7 @@ The simulator's runtime shown in Simulator is authoritative; Safari's user-agent
 
 `audioAuditRun.ts` writes runtime, host load/memory at start/end, Git revision/dirty status, planned suites and probe hashes to `run-summary.json`. Browser version is in each raw run's UA. Compare matching engines, suites, protocol, fixtures and system load. A changed signal harness requires recalibration and a cautious comparison, not a blind acceptance of fewer failures.
 
-`gate-summary.json` contains failures and inconclusive checks with stable case keys. With `--baseline`, it lists introduced/resolved/retained keys for suites present in both directories. Unmatched suites are not evidence of improvement. Keyboard failures are listed but not included in per-suite deltas. Older keyboard files without before/after transport evidence are marked inconclusive for unintended playback changes. Old baselines without manifests are usable as diagnostic context; their exact runtime/load equivalence is not established. Case-key changes or a different probe may invalidate a numerical comparison. Baseline failures are never silently blessed.
+`gate-summary.json` contains failures and inconclusive checks with stable case keys. With `--baseline`, it lists introduced/resolved/retained keys for suites present in both directories. Unmatched suites are not evidence of improvement. Keyboard failures are listed but not included in per-suite deltas. Keyboard reports must declare `playback-priority` and retain before/after transport evidence. Older reports are inconclusive for the current shortcut contract; mixer activation or a missing playback toggle fails. Old baselines without manifests are usable as diagnostic context; their exact runtime/load equivalence is not established. Case-key changes or a different probe may invalidate a numerical comparison. Baseline failures are never silently blessed.
 
 The gate requires complete state/transition coverage, valid calibration, completed runs, desktop keyboard evidence, and measurable expected audible pairs in long recordings. It detects corroborated missing/unwanted output, >20 ms high-confidence source-envelope lag, wrong button states, transport/rate faults and keyboard interference. Null/low-confidence lag is inconclusive, not zero delay. Exit2 can coexist with many confirmed failures: inspect both arrays.
 

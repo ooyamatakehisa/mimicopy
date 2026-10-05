@@ -456,7 +456,7 @@ test("loads audio and supports the main playback and marker workflow", async ({
     (element as HTMLAudioElement).currentTime
   )).toBeCloseTo(5, 1);
   await page.getByTitle("マーカー削除").focus();
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("Alt+Enter");
   await expect(page.getByText("No markers")).toBeVisible();
 
   expect(trackId).toBeTruthy();
@@ -563,7 +563,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect.poll(() => transport.evaluate((element) =>
     (element as HTMLAudioElement).currentTime
   )).toBeGreaterThan(0.1);
-  // Exercise all six native buttons during real playback. The audio audit
+  // Focused mixer controls must not steal playback shortcuts. The audio audit
   // separately measures output; this UI test never substitutes media clocks.
   await mixer.getByTitle("ギターをソロ").click();
   for (const channel of ["原音", "ギター", "ギター以外"]) {
@@ -571,8 +571,8 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
       const button = mixer.getByTitle(`${channel}を${action}`);
       await button.focus();
       await page.keyboard.press("Space");
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-      await expect(page.getByTitle("停止")).toBeVisible();
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+      await expect(page.getByTitle("再生", { exact: true })).toBeVisible();
       await page.keyboard.press("Enter");
       await expect(button).toHaveAttribute("aria-pressed", "false");
       await expect(page.getByTitle("停止")).toBeVisible();
@@ -614,6 +614,7 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect.poll(() => transport.evaluate((element) =>
     (element as HTMLAudioElement).currentTime
   )).toBeGreaterThan(5);
+  await expect(page.getByLabel("Playback preparation")).toHaveCount(0);
   const seekTime = await transport.evaluate((element) => (element as HTMLAudioElement).currentTime);
   expect(seekTime).toBeGreaterThan(5);
   await page.keyboard.press("ArrowLeft");
@@ -796,7 +797,7 @@ test.describe("mobile track editor", () => {
     await toggle.tap();
     await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
     await toggle.focus();
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Alt+Enter");
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath("mobile.png"), fullPage: true });
@@ -939,3 +940,109 @@ test.describe("mobile track editor", () => {
   });
 
 });
+
+async function mockPlaybackQueue(page: Page) {
+  const tracks = ["first", "outside", "last"].map((id) => ({
+    id, title: `Queue ${id}`, folderId: id === "outside" ? null : "practice",
+    createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z",
+    duration: fixtureDurationSeconds, mediaUrl: `/media/queue-${id}.mp3`,
+    markerCount: 1, markers: [{ id: "near-end", label: "Ending", time: 19 }],
+    sourceType: "upload", separation: id === "last" ? {
+      createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z",
+      status: "completed", targetStem: "guitar", error: null, progress: null,
+      mediaUrl: "/media/queue-stem.mp3", remainderMediaUrl: "/media/queue-remainder.mp3"
+    } : null
+  }));
+  await page.route("**/api/folders", (route) => route.fulfill({ json: { folders: [{ id: "practice", name: "練習" }] } }));
+  await page.route("**/api/tracks", (route) => route.fulfill({ json: { tracks } }));
+  await page.route(/\/api\/tracks\/(first|outside|last)$/, (route) => {
+    const track = tracks.find((item) => route.request().url().endsWith(`/${item.id}`));
+    return route.fulfill({ json: { track } });
+  });
+  await page.route("**/api/tracks/*/beat-grid", (route) => route.fulfill({ json: createCompletedBeatAnalysis() }));
+  await page.route("**/api/tracks/last/mixer", async (route) => {
+    // Make original audio/graph arrive before the multichannel replacement.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.fulfill({ json: { mediaUrl: "/media/queue-mixer.wav" } });
+  });
+  await page.route("**/media/queue-*", async (route) => {
+    const isMixer = route.request().url().endsWith(".wav");
+    const buffer = isMixer ? mixerWav : sourceMp3;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), buffer.length - 1) : buffer.length - 1;
+    await route.fulfill({
+      body: buffer.subarray(start, end + 1), contentType: isMixer ? "audio/wav" : "audio/mpeg",
+      status: range ? 206 : 200,
+      headers: { "accept-ranges": "bytes", ...(range ? { "content-range": `bytes ${start}-${end}/${buffer.length}` } : {}) }
+    });
+  });
+}
+
+async function playEnding(page: Page) {
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  await page.getByTitle("マーカーへ移動", { exact: true }).click();
+  await expect(page.getByLabel("Playback preparation")).toHaveCount(0);
+  await page.getByTitle("再生", { exact: true }).click();
+}
+
+for (const scope of ["all", "folder", "search"] as const) {
+  test(`auto-advances in the entered ${scope} list and preserves local preference`, async ({ page }, testInfo) => {
+    await mockPlaybackQueue(page);
+    await page.goto(scope === "folder" ? "/?folder=practice" : "/");
+    if (scope === "search") await page.getByLabel("曲を検索").fill("Queue first");
+    await page.getByTitle("Queue first を開く", { exact: true }).click();
+    const setting = page.getByRole("checkbox", { name: "次の曲を自動再生", exact: true });
+    await expect(setting).not.toBeChecked();
+    await setting.check();
+    await page.reload();
+    await expect(setting).toBeChecked();
+    await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+    await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.paused)).toBe(true);
+    if (scope === "folder") {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.screenshot({ path: testInfo.outputPath("auto-next-desktop.png"), fullPage: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({ path: testInfo.outputPath("auto-next-mobile.png"), fullPage: true });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    await playEnding(page);
+    if (scope === "search") {
+      await expect(page.getByTitle("再生", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(/\/tracks\/first$/);
+      return;
+    }
+    const next = scope === "folder" ? "last" : "outside";
+    await expect(page).toHaveURL(new RegExp(`/tracks/${next}$`));
+    await expect(page.getByTitle("停止", { exact: true })).toBeVisible();
+    await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime)).toBeGreaterThan(0.3);
+    await expect(page.locator("audio")).toHaveCount(1);
+    // The automatic request is consumed: reload/back must not restart audio.
+    await page.reload();
+    await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+    await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.paused)).toBe(true);
+    if (scope === "folder") {
+      await expect(page.getByText("練習の最後の曲です。再生後に停止します。")).toBeVisible();
+      await expect(page.getByTitle("ギターをソロ", { exact: true })).toBeEnabled();
+      await playEnding(page);
+      try {
+        await expect(page.getByTitle("再生", { exact: true })).toBeVisible();
+      } catch (error) {
+        await testInfo.attach("final-track-media-state", { contentType: "application/json", body: JSON.stringify(await page.locator("audio").evaluate((audio: HTMLAudioElement) => ({
+          src: audio.currentSrc, currentTime: audio.currentTime, duration: audio.duration,
+          paused: audio.paused, ended: audio.ended, seeking: audio.seeking, readyState: audio.readyState,
+          rate: audio.playbackRate, error: audio.error?.message
+        }))) });
+        throw error;
+      }
+      await expect(page).toHaveURL(/\/tracks\/last$/);
+      await page.getByTitle("ライブラリへ戻る").click();
+      await expect(page).toHaveURL(/\?folder=practice$/);
+    } else {
+      await setting.uncheck();
+      await playEnding(page);
+      await expect(page.getByTitle("再生", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(/\/tracks\/outside$/);
+    }
+  });
+}

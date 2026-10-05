@@ -109,9 +109,12 @@ assert.ok(evaluateAudioAudit(droppedEdge).inconclusive.some((issue) => issue.key
 const nan = quick(); nan.cases[0].signal.rms.original = Number.NaN;
 assert.ok(evaluateAudioAudit(nan).inconclusive.some((issue) => issue.reason === "original-invalid-rms"));
 assert.deepEqual(compareAuditFindings([{ key: "new", reason: "new" }, { key: "same", reason: "same" }], [{ key: "old", reason: "old" }, { key: "same", reason: "same" }]), { introduced: ["new"], resolved: ["old"], retained: ["same"] });
-const keyboard = ["原音", "ギター", "ギター以外"].flatMap((label) => ["ミュート", "ソロ"].flatMap((action) => ["Enter", "Space"].map((key) => ({ label, action, key, toggled: true, playingBefore: false, playing: false, unexpectedPlaybackChange: false }))));
+const keyboard = ["原音", "ギター", "ギター以外"].flatMap((label) => ["ミュート", "ソロ"].flatMap((action) => ["Enter", "Space"].map((key) => ({ label, action, key, policy: "playback-priority", toggled: false, playingBefore: false, playing: true }))));
 assert.deepEqual(evaluateAuditKeyboard(keyboard, "test"), { failures: [], inconclusive: [] });
-assert.equal(evaluateAuditKeyboard(keyboard.map(({ playingBefore: _, unexpectedPlaybackChange: __, ...legacy }) => legacy), "test").inconclusive.length, 12, "Legacy evidence does not prove absence of transport interference");
-keyboard[0].playing = true;
-assert.ok(evaluateAuditKeyboard(keyboard, "test").failures.some((issue) => issue.reason === "keyboard-button-changed-playback"));
+assert.equal(evaluateAuditKeyboard(keyboard.map(({ playingBefore: _, policy: __, ...legacy }) => legacy), "test").inconclusive.length, 12, "Legacy evidence does not prove playback priority");
+keyboard[0].playing = false;
+assert.ok(evaluateAuditKeyboard(keyboard, "test").failures.some((issue) => issue.reason === "keyboard-shortcut-did-not-toggle-playback"));
 console.log("Audio audit gate self-checks passed: output evidence, leakage, inconclusive lag, coverage, and baseline differences.");
+
+keyboard[0].toggled = true;
+assert.ok(evaluateAuditKeyboard(keyboard, "test").failures.some((issue) => issue.reason === "keyboard-shortcut-activated-button"));

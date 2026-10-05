@@ -12,6 +12,7 @@ import {
 } from "react-router";
 import { LibraryPage } from "./features/library/LibraryPage";
 import { TrackEditorPage } from "./features/track/TrackEditorPage";
+import { usePlaybackSequence } from "./features/track/usePlaybackSequence";
 import { cn } from "./lib/cn";
 
 export function App() {
@@ -82,9 +83,9 @@ function LibraryRoute() {
     <LibraryPage
       activeTrackId={activeTrackId}
       navigateToLibrary={() => navigate("/")}
-      navigateToTrack={(trackId) =>
+      navigateToTrack={(trackId, playbackQueue) =>
         navigate(`/tracks/${encodeURIComponent(trackId)}`, {
-          state: { activeTrackId: trackId, librarySearch: location.search }
+          state: { activeTrackId: trackId, librarySearch: location.search, playbackQueue }
         })
       }
     />
@@ -96,6 +97,7 @@ function TrackRoute() {
   const librarySearch = readLibrarySearch(location.state);
   const navigate = useNavigate();
   const { trackId } = useParams<"trackId">();
+  const sequence = usePlaybackSequence(trackId);
 
   if (!trackId) {
     return <Navigate to="/" replace />;
@@ -103,6 +105,8 @@ function TrackRoute() {
 
   return (
     <TrackEditorPage
+      key={trackId}
+      sequence={sequence}
       navigateToLibrary={() =>
         navigate(
           { pathname: "/", search: librarySearch },
