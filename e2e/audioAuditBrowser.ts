@@ -32,7 +32,7 @@ const report = {
   runId, startedAt: new Date().toISOString(), finishedAt: "", complete: false, suiteFinished: false,
   userAgent: navigator.userAgent, url: location.href,
   thresholds: { audibleRms: 0.0005, silenceRms: 0.00015, clockSpreadMs: 20, signalLagMs: 20 },
-  method: "Production app, fixture HTTP API, real HTMLMediaElement playback and Web Audio output. Audio methods, clocks and volume are never mocked. Source taps and final mix captured on one AudioContext clock. All UI state changes use real button handlers; initial playback needs one trusted user gesture. One six-channel media transport drives three independently measured post-gain stereo sources. Shared +100ms seek cases replace impossible per-source clock injection.",
+  method: "Production app, fixture HTTP API, real HTMLMediaElement playback and Web Audio output. Audio methods, clocks and volume are never mocked. Source taps and final mix captured on one AudioContext clock. All UI state changes use real button handlers; initial playback needs one trusted user gesture. One eight-channel PCM16 WAV (RIFF/RF64) transport drives three independently measured post-gain stereo music sources, with two silent cue lanes. The recorded transportFixture identifies the actual container. Shared +100ms seek cases replace impossible per-source clock injection.",
   cases: [] as AuditCase[], events: [] as { time: number; label: string; event: string; mediaTime: number }[],
   seekPreparation: [] as { name: string; durationMs: number; completed: boolean; expectedPlaying: boolean; after: MediaSnapshot[]; clock?: ClockPreparation }[],
   errors: [] as string[], phase: "Preparing"

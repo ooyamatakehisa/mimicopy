@@ -2,11 +2,12 @@ import { useEffect, useRef } from "react";
 import type { PlaybackState } from "./usePlaybackState";
 
 /** Key this component by media URL so a replacement gets its own source node. */
-export function PlaybackAudio({ mediaUrl, playback, autoPlay = false, onAutoPlayConsumed }: {
+export function PlaybackAudio({ mediaUrl, playback, audioContext, autoPlay = false, onAutoPlayConsumed }: {
   mediaUrl: string;
   playback: PlaybackState;
+  audioContext: AudioContext | null;
   autoPlay?: boolean;
-  onAutoPlayConsumed?: () => void;
+  onAutoPlayConsumed?: () => boolean;
 }) {
   const { audioRef, bindAudio, isPlaying, markPaused, markEnded, markPlaying, playbackRate,
     togglePlayback, reportMediaError, restoreMetadata, restoreSeeked, syncMediaDuration, syncMediaTime, syncPlaybackRate } = playback;
@@ -38,12 +39,16 @@ export function PlaybackAudio({ mediaUrl, playback, autoPlay = false, onAutoPlay
 
   const autoPlayStarted = useRef(false);
   useEffect(() => {
-    if (!autoPlay || autoPlayStarted.current ||
+    if (!autoPlay || !audioContext || autoPlayStarted.current ||
         playback.audioProcessingRef.current?.element !== audioRef.current) return;
     autoPlayStarted.current = true;
-    onAutoPlayConsumed?.();
+    // The owner can reject a stale ready effect after a manual action has
+    // already consumed this request, including across element replacement.
+    if (onAutoPlayConsumed?.() === false) return;
     togglePlayback();
-  }, [autoPlay, audioRef, onAutoPlayConsumed, playback.audioProcessingRef, togglePlayback]);
+    // Context identity changes even when two ready graphs are reconciled in
+    // one React batch. A readiness boolean alone can miss the replacement.
+  }, [autoPlay, audioContext, audioRef, onAutoPlayConsumed, playback.audioProcessingRef, togglePlayback]);
 
   return (
     <audio

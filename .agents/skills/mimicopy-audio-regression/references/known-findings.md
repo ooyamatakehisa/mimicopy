@@ -1,5 +1,7 @@
 # Investigation handoff — 2026-10-02
 
+For the later click/metronome offset, see [verification-2026-10-05.md](verification-2026-10-05.md) and [click-protocol.md](click-protocol.md). The historical music matrix below did not contain click beats. The current transport has eight PCM WAV channels, including two cue lanes; the six-channel WAV descriptions below record earlier stages.
+
 These findings describe the pre-fix application at revision `f05f50c4817b22d4bf97ba0a03ea0a880749bcf0`. The production source was unchanged during the initial audit. Do not treat these failures as permanent expectations or an allowlist.
 
 Raw baseline evidence on the original workspace is `audio-audit.local/2026-10-02/`: `index.html`, `summary.json`, `verification-summary.json` and the six completed run JSONs. This directory is ignored and may not exist in another clone. The baseline is reproducible using repository scripts; missing historical evidence is not a reason to invent prior results.

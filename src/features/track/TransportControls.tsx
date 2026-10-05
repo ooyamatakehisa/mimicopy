@@ -103,7 +103,7 @@ export function TransportControls({ autoNext, beatAnalysis, beatGrid, beatGridEr
 
       <div className="track-setting col-span-full flex-wrap" aria-label="Click track">
         <Button className="min-w-0 flex-1 lg:flex-none" size="transport" variant={clickTrack.isClickEnabled ? "accent" : "secondary"}
-          title="クリック音をオン/オフ" aria-pressed={clickTrack.isClickEnabled} disabled={!beatGrid || isBeatAnalysisBusy}
+          title="クリック音をオン/オフ" aria-pressed={clickTrack.isClickEnabled} disabled={!clickTrack.isClickAvailable || isBeatAnalysisBusy}
           onClick={clickTrack.toggleClickTrack}>
           {clickTrack.isClickEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}<span>Click</span>
         </Button>

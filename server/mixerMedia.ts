@@ -5,14 +5,21 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { LibraryStore } from "./libraryStore.js";
+import {
+  CLICK_CUE_SAMPLE_RATE,
+  getClickCueFrames,
+  getClickCueRevisionInput,
+  MAX_CLICK_CUE_DURATION_SECONDS,
+  type ClickCueFrame
+} from "./clickCueFormat.js";
+import { writeClickCueWav } from "./clickCueMedia.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-const sampleRate = 48_000;
-const channels = 6;
-const bytesPerFrame = channels * 2;
-export const MAX_MIXER_DURATION_SECONDS = 2 * 60 * 60;
-const maxPcmBytes = MAX_MIXER_DURATION_SECONDS * sampleRate * bytesPerFrame;
+const sampleRate = CLICK_CUE_SAMPLE_RATE;
+const channels = 8;
+export const MAX_MIXER_DURATION_SECONDS = MAX_CLICK_CUE_DURATION_SECONDS;
+const maxFrames = MAX_MIXER_DURATION_SECONDS * sampleRate;
 
 export class MixerMediaError extends Error {
   constructor(readonly status: number, message: string) {
@@ -22,10 +29,19 @@ export class MixerMediaError extends Error {
 
 export type MixerMediaInput = {
   originalPath: string;
+  outputPath: string;
+  cues?: readonly ClickCueFrame[];
+} & ({
+  mode?: "separated";
   stemPath: string;
   remainderPath: string;
-  outputPath: string;
-};
+} | {
+  mode: "original";
+  stemPath?: never;
+  remainderPath?: never;
+});
+
+export type MixerMediaResult = { mediaUrl: string; cueRevision: string };
 
 function getFfmpegPath() {
   const binary = process.env.FFMPEG_PATH ?? require("ffmpeg-static") as unknown;
@@ -35,75 +51,119 @@ function getFfmpegPath() {
   return binary;
 }
 
-export function mixerMediaArguments(input: MixerMediaInput) {
+export function mixerMediaArguments(input: MixerMediaInput, cuePath: string) {
   // Explicit channel copies preserve stereo and duplicate mono at unity,
   // matching Web Audio's upmix. ffmpeg's automatic mono upmix is -3 dB.
   const stereo = "aeval='val(0)|val(min(1,nb_in_channels-1))':c=stereo," +
     "aresample=48000:out_chlayout=stereo,asetpts=N/SR/TB";
+  const separated = input.mode !== "original";
+  const cueIndex = separated ? 3 : 1;
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
     "-i", input.originalPath,
-    "-i", input.stemPath,
-    "-i", input.remainderPath,
+    ...(separated ? ["-i", input.stemPath, "-i", input.remainderPath] : []),
+    "-i", cuePath,
     "-filter_complex",
     `[0:a:0]${stereo}[original];` +
-      `[1:a:0]${stereo},apad[stem];` +
-      `[2:a:0]${stereo},apad[remainder];` +
-      "[original][stem][remainder]join=inputs=3:channel_layout=5.1:" +
-      "map=0.0-FL|0.1-FR|1.0-FC|1.1-LFE|2.0-BL|2.1-BR[mixer]",
+      (separated
+        ? `[1:a:0]${stereo},apad[stem];[2:a:0]${stereo},apad[remainder];`
+        : "anullsrc=r=48000:cl=stereo[stem];anullsrc=r=48000:cl=stereo[remainder];") +
+      `[${cueIndex}:a:0]apad,asetpts=N/SR/TB[cues];` +
+      "[original][stem][remainder][cues]join=inputs=4:channel_layout=7.1:" +
+      "map=0.0-FL|0.1-FR|1.0-FC|1.1-LFE|2.0-BL|2.1-BR|3.0-SL|3.1-SR[mixer]",
     "-map", "[mixer]", "-map_metadata", "-1",
     "-c:a", "pcm_s16le", "-ar", String(sampleRate),
     // Decode slightly beyond the limit so oversized inputs are rejected, not
-    // silently truncated. Even dishonest/missing duration metadata cannot
-    // overflow a RIFF WAV's 32-bit size fields (2 hours is about 4.15 GB).
+    // silently truncated. Validate the encoder's actual sample count instead
+    // of trusting an input file's possibly missing or dishonest duration.
     "-t", String(MAX_MIXER_DURATION_SECONDS + 0.001),
-    "-rf64", "never", "-f", "wav", input.outputPath
+    "-rf64", "auto", "-f", "wav", input.outputPath
   ];
 }
 
-async function validateMixerWav(filePath: string) {
+/** Validate our generated PCM container without reading its multi-gigabyte payload. */
+export async function validateMixerWav(filePath: string) {
   const file = await open(filePath, "r");
   try {
     const { size } = await file.stat();
-    const header = Buffer.alloc(4096);
-    const { bytesRead } = await file.read(header, 0, header.length, 0);
-    if (header.toString("ascii", 0, 4) !== "RIFF" ||
-        header.toString("ascii", 8, 12) !== "WAVE") {
-      throw new Error("The mixer output is not a RIFF WAV.");
-    }
-    let validFormat = false;
-    for (let offset = 12; offset + 8 <= bytesRead;) {
-      const kind = header.toString("ascii", offset, offset + 4);
-      const length = header.readUInt32LE(offset + 4);
-      const dataOffset = offset + 8;
-      if (kind === "fmt " && length >= 16 && dataOffset + length <= bytesRead) {
-        const format = header.readUInt16LE(dataOffset);
-        const isPcm = format === 1 ||
-          (format === 0xfffe && length >= 40 && header.readUInt16LE(dataOffset + 24) === 1);
-        validFormat = isPcm && header.readUInt16LE(dataOffset + 2) === channels &&
-          header.readUInt32LE(dataOffset + 4) === sampleRate &&
-          header.readUInt16LE(dataOffset + 12) === bytesPerFrame &&
-          header.readUInt16LE(dataOffset + 14) === 16;
+    const invalid = () => new Error("The mixer output has invalid or truncated PCM WAV metadata.");
+    if (!Number.isSafeInteger(size) || size < 44) throw invalid();
+    const read = async (position: number, length: number) => {
+      if (position + length > size) throw invalid();
+      const bytes = Buffer.alloc(length);
+      if ((await file.read(bytes, 0, length, position)).bytesRead !== length) throw invalid();
+      return bytes;
+    };
+    const root = await read(0, 12);
+    const container = root.toString("ascii", 0, 4);
+    if ((container !== "RIFF" && container !== "RF64") || root.toString("ascii", 8, 12) !== "WAVE") throw invalid();
+    const rf64 = container === "RF64";
+    if (root.readUInt32LE(4) !== (rf64 ? 0xffffffff : size - 8)) throw invalid();
+    let dataSize64: bigint | null = null;
+    let sampleCount64: bigint | null = null;
+    let formatSeen = false;
+    let dataOffset: number | null = null;
+    let frames: number | null = null;
+    let metadataBytes = 0;
+    let chunks = 0;
+    // ffmpeg emits only a few small headers. Bound work and allocations even
+    // when a cached file has been corrupted; skip PCM by its checked length.
+    for (let offset = 12; offset < size;) {
+      if (++chunks > 64) throw invalid();
+      const chunk = await read(offset, 8);
+      const kind = chunk.toString("ascii", 0, 4);
+      const declaredLength = chunk.readUInt32LE(4);
+      const payload = offset + 8;
+      if (rf64 && offset === 12 && kind !== "ds64") throw invalid();
+      let length = declaredLength;
+      if (kind === "ds64") {
+        // Our encoder uses one data chunk and no additional 64-bit chunk table.
+        if (!rf64 || offset !== 12 || declaredLength !== 28) throw invalid();
+        const ds64 = await read(payload, 28);
+        if (ds64.readBigUInt64LE(0) !== BigInt(size - 8) || ds64.readUInt32LE(24) !== 0) throw invalid();
+        dataSize64 = ds64.readBigUInt64LE(8);
+        sampleCount64 = ds64.readBigUInt64LE(16);
+      } else if (kind === "data" && rf64) {
+        if (declaredLength !== 0xffffffff || dataSize64 === null || dataSize64 > BigInt(size)) throw invalid();
+        length = Number(dataSize64);
+      } else if (declaredLength === 0xffffffff) throw invalid();
+      const end = payload + length;
+      const next = end + length % 2;
+      if (next > size) throw invalid();
+      if (kind === "fmt ") {
+        if (formatSeen || length < 16 || length > 40) throw invalid();
+        const format = await read(payload, length);
+        const tag = format.readUInt16LE(0);
+        if (format.readUInt16LE(2) !== channels || format.readUInt32LE(4) !== sampleRate ||
+            format.readUInt32LE(8) !== sampleRate * channels * 2 ||
+            format.readUInt16LE(12) !== channels * 2 || format.readUInt16LE(14) !== 16) throw invalid();
+        if (tag === 0xfffe) {
+          const pcmGuid = Buffer.from("0100000000001000800000aa00389b71", "hex");
+          if (length !== 40 || format.readUInt16LE(16) !== 22 || format.readUInt16LE(18) !== 16 ||
+              format.readUInt32LE(20) !== 0x63f || !format.subarray(24, 40).equals(pcmGuid)) throw invalid();
+        } else if (tag !== 1 || (length !== 16 && !(length === 18 && format.readUInt16LE(16) === 0))) throw invalid();
+        formatSeen = true;
+      } else if (kind === "data") {
+        if (!formatSeen || dataOffset !== null || length === 0 || length % (channels * 2) !== 0) throw invalid();
+        frames = length / (channels * 2);
+        if (rf64 && sampleCount64 !== BigInt(frames)) throw invalid();
+        if (frames > maxFrames) throw new MixerMediaError(413, "Synchronized mixing supports tracks up to 2 hours.");
+        dataOffset = payload;
       }
-      if (kind === "data") {
-        if (length > maxPcmBytes) {
-          throw new MixerMediaError(413, "Synchronized mixing supports tracks up to 2 hours.");
-        }
-        if (!validFormat || length === 0 || length % bytesPerFrame !== 0 ||
-            dataOffset + length !== size) {
-          throw new Error("The mixer output has invalid audio data.");
-        }
-        return;
+      if (kind !== "data") {
+        metadataBytes += 8 + length;
+        if (metadataBytes > 1024 * 1024) throw invalid();
       }
-      offset = dataOffset + length + (length % 2);
+      offset = next;
     }
-    throw new Error("The mixer output is missing its audio data.");
+    if (frames === null || dataOffset === null) throw invalid();
+    return { frames, sampleRate, channels, dataOffset, container };
   } finally {
     await file.close();
   }
 }
 
-/** One transport, with original L/R, stem L/R, remainder L/R in that order. */
+/** One transport: original L/R, stem L/R, remainder L/R, normal/downbeat cues. */
 export async function generateMixerMedia(
   input: MixerMediaInput,
   ffmpegPathOrSignal: string | AbortSignal = getFfmpegPath(),
@@ -118,9 +178,12 @@ export async function generateMixerMedia(
   const cancellation = suppliedSignal ? AbortSignal.any([suppliedSignal, deadline]) : deadline;
   await mkdir(path.dirname(input.outputPath), { recursive: true });
   const temporaryPath = `${input.outputPath}.${randomUUID()}.tmp`;
+  const cuePath = `${temporaryPath}.cues.wav`;
   try {
     cancellation.throwIfAborted();
-    const execution = execFileAsync(ffmpegPath, mixerMediaArguments({ ...input, outputPath: temporaryPath }), {
+    await writeClickCueWav(cuePath, input.cues ?? [], cancellation);
+    cancellation.throwIfAborted();
+    const execution = execFileAsync(ffmpegPath, mixerMediaArguments({ ...input, outputPath: temporaryPath }, cuePath), {
       maxBuffer: 1024 * 1024,
       signal: cancellation
     });
@@ -157,12 +220,16 @@ export async function generateMixerMedia(
     await rename(temporaryPath, input.outputPath);
     cancellation.throwIfAborted();
   } finally {
-    await rm(temporaryPath, { force: true });
+    try {
+      await rm(temporaryPath, { force: true });
+    } finally {
+      await rm(cuePath, { force: true });
+    }
   }
 }
 
 type MixerStore = Pick<LibraryStore,
-  "mediaDir" | "getTrack" | "getMediaFilename" | "getSeparationMediaFilenames">;
+  "mediaDir" | "getTrack" | "getMediaFilename" | "getSeparationMediaFilenames" | "getBeatAnalysis">;
 
 export function createMixerMediaService({
   store,
@@ -173,7 +240,7 @@ export function createMixerMediaService({
 }) {
   const pending = new Map<string, {
     controller: AbortController;
-    promise: Promise<{ mediaUrl: string }>;
+    promise: Promise<MixerMediaResult>;
   }>();
   const trackDirectory = (trackId: string) =>
     createHash("sha256").update(trackId).digest("hex");
@@ -187,54 +254,123 @@ export function createMixerMediaService({
     return path.join(store.mediaDir, filename);
   }
 
-  async function prepare(trackId: string, signal: AbortSignal) {
-    signal.throwIfAborted();
+  function readSelection(trackId: string) {
     const track = store.getTrack(trackId);
     const originalFilename = store.getMediaFilename(trackId);
     if (!track || !originalFilename) {
       throw new MixerMediaError(404, "Track was not found.");
     }
-    const separation = store.getSeparationMediaFilenames(trackId);
-    if (track.separation?.status !== "completed" || !separation?.remainderMediaFilename) {
-      throw new MixerMediaError(409, "Both separated sources must be ready before mixing.");
-    }
     if (track.duration > MAX_MIXER_DURATION_SECONDS) {
       throw new MixerMediaError(413, "Synchronized mixing supports tracks up to 2 hours.");
     }
+    const separation = track.separation?.status === "completed"
+      ? store.getSeparationMediaFilenames(trackId) : null;
+    if (track.separation?.status === "completed" && !separation?.remainderMediaFilename) {
+      throw new MixerMediaError(404, "A completed separated audio file was not found.");
+    }
+    const analysis = store.getBeatAnalysis(trackId);
+    const beatGrid = analysis?.status === "completed" ? analysis.beatGrid : null;
+    if (!separation && !beatGrid) {
+      throw new MixerMediaError(409, "Separated audio or a completed beat grid must be ready before mixing.");
+    }
+    let cues: ClickCueFrame[];
+    let cueRevision: string;
+    try {
+      cues = getClickCueFrames(beatGrid);
+      cueRevision = createHash("sha256").update(getClickCueRevisionInput(beatGrid)).digest("hex");
+    } catch (error) {
+      throw new MixerMediaError(422, error instanceof Error ? error.message : "Invalid click beat grid.");
+    }
     const originalPath = sourcePath(originalFilename);
-    const stemPath = sourcePath(separation.mediaFilename);
-    const remainderPath = sourcePath(separation.remainderMediaFilename);
-    const inputPaths = [originalPath, stemPath, remainderPath];
-    const inputs = await Promise.all(inputPaths.map(async (inputPath) => {
-      const metadata = await stat(inputPath).catch((error: unknown) => {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    const sourceInput = separation?.remainderMediaFilename
+      ? { mode: "separated" as const, originalPath, stemPath: sourcePath(separation.mediaFilename),
+          remainderPath: sourcePath(separation.remainderMediaFilename) }
+      : { mode: "original" as const, originalPath };
+    return {
+      sourceInput, cues, cueRevision,
+      // Analysis timestamps do not affect the encoded samples. A reanalysis
+      // with identical cue frames can reuse the same immutable cache file.
+      selectionKey: JSON.stringify([sourceInput, cueRevision])
+    };
+  }
+
+  async function readSnapshot(trackId: string, signal: AbortSignal) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      signal.throwIfAborted();
+      const selection = readSelection(trackId);
+      const source = selection.sourceInput;
+      const inputPaths = source.mode === "separated"
+        ? [source.originalPath, source.stemPath, source.remainderPath] : [source.originalPath];
+      const inputs = await Promise.all(inputPaths.map(async (inputPath) => {
+        const metadata = await stat(inputPath).catch((error: unknown) => {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            throw new MixerMediaError(404, "A source audio file was not found.");
+          }
+          throw error;
+        });
+        if (!metadata.isFile()) {
           throw new MixerMediaError(404, "A source audio file was not found.");
         }
+        return [path.basename(inputPath), metadata.size, metadata.mtimeMs, metadata.ctimeMs];
+      }));
+      signal.throwIfAborted();
+      // A reanalysis or completed separation may change while stat() awaits.
+      if (readSelection(trackId).selectionKey !== selection.selectionKey) continue;
+      const fingerprint = createHash("sha256")
+        .update(JSON.stringify(["pcm16-48k-8ch-cues-rf64-auto-v2", inputs, selection.cueRevision]))
+        .digest("hex");
+      const outputPath = path.join(cacheDirectory(trackId), `${fingerprint}.wav`);
+      return { ...selection, fingerprint, outputPath };
+    }
+    throw new MixerMediaError(409, "Audio sources or beat analysis changed while preparing synchronized audio. Please retry.");
+  }
+
+  async function prepare(trackId: string, signal: AbortSignal): Promise<MixerMediaResult> {
+    let snapshot = await readSnapshot(trackId, signal);
+    // One promise per track follows the latest snapshot. New callers cannot
+    // accidentally join a promise that returns an obsolete grid. Bound work
+    // when a track is repeatedly changed during generation.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      signal.throwIfAborted();
+      const cached = await stat(snapshot.outputPath).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
         throw error;
       });
-      if (!metadata.isFile()) {
-        throw new MixerMediaError(404, "A source audio file was not found.");
+      signal.throwIfAborted();
+      if (cached) await validateMixerWav(snapshot.outputPath);
+      let generated = false;
+      try {
+        if (!cached) {
+          await generate({ ...snapshot.sourceInput, cues: snapshot.cues, outputPath: snapshot.outputPath }, signal);
+          generated = true;
+        }
+      } catch (error) {
+        signal.throwIfAborted();
+        const latest = await readSnapshot(trackId, signal);
+        if (latest.fingerprint === snapshot.fingerprint) throw error;
+        snapshot = latest;
+        continue;
       }
-      return [path.basename(inputPath), metadata.size, metadata.mtimeMs];
-    }));
-    signal.throwIfAborted();
-    const fingerprint = createHash("sha256").update(JSON.stringify(["pcm16-48k-v2", inputs])).digest("hex");
-    const outputPath = path.join(cacheDirectory(trackId), `${fingerprint}.wav`);
-    const cached = await stat(outputPath).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-      throw error;
-    });
-    signal.throwIfAborted();
-    if (!cached) {
-      await generate({ originalPath, stemPath, remainderPath, outputPath }, signal);
+      signal.throwIfAborted();
+      let latest: Awaited<ReturnType<typeof readSnapshot>>;
+      try {
+        latest = await readSnapshot(trackId, signal);
+      } catch (error) {
+        if (generated) await rm(snapshot.outputPath, { force: true });
+        throw error;
+      }
+      if (latest.fingerprint === snapshot.fingerprint) {
+        return {
+          mediaUrl: `/media/mixers/${trackDirectory(trackId)}/${snapshot.fingerprint}.wav`,
+          cueRevision: snapshot.cueRevision
+        };
+      }
+      // This newly encoded file was never advertised. If its source changed
+      // mid-decode it must not be reused even if an older grid later returns.
+      if (generated) await rm(snapshot.outputPath, { force: true });
+      snapshot = latest;
     }
-    signal.throwIfAborted();
-    // A deletion may have happened while ffmpeg was running. Never advertise
-    // the output of a deleted track; remove() also waits before deleting it.
-    if (!store.getTrack(trackId)) {
-      throw new MixerMediaError(404, "Track was not found.");
-    }
-    return { mediaUrl: `/media/mixers/${trackDirectory(trackId)}/${fingerprint}.wav` };
+    throw new MixerMediaError(409, "Audio sources or beat analysis changed repeatedly. Please retry.");
   }
 
   return {

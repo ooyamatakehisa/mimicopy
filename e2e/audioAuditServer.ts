@@ -1,9 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import ffmpeg from "ffmpeg-static";
 import path from "node:path";
 import { createServer, type Plugin } from "vite";
 import { generateMixerMedia } from "../server/mixerMedia";
+import { getClickCueRevisionInput } from "../server/clickCueFormat";
 import { createStereoAudioAuditWav } from "./audioAuditFixtures";
 
 // Isolated fixture API: never opens the user's library or runs separation tools.
@@ -33,13 +35,29 @@ for (const index of [0, 1, 2]) {
   media.push(await readFile(filename));
 }
 const mixerPath = path.join(outputDirectory, `fixture-mixer-${format}.wav`);
+const cueRevision = createHash("sha256").update(getClickCueRevisionInput(null)).digest("hex");
 await generateMixerMedia({
   originalPath: path.join(outputDirectory, `fixture-0.${format}`),
   stemPath: path.join(outputDirectory, `fixture-1.${format}`),
   remainderPath: path.join(outputDirectory, `fixture-2.${format}`),
-  outputPath: mixerPath
+  outputPath: mixerPath,
+  cues: []
 });
 const mixer = await readFile(mixerPath);
+const riffType = mixer.toString("ascii", 0, 4);
+if ((riffType !== "RIFF" && riffType !== "RF64") || mixer.toString("ascii", 8, 12) !== "WAVE") {
+  throw new Error("Generated audio mixer must be RIFF/RF64 WAVE; do not label another container as WAV.");
+}
+const transportFixture = {
+  filename: path.basename(mixerPath), container: "wav", riffType, codec: "pcm_s16le", generationRf64Mode: "auto", sourceFormat: format,
+  sha256: createHash("sha256").update(mixer).digest("hex"),
+  sampleRate: 48_000, bitsPerSample: 16, channels: 8,
+  musicChannelPairs: [[0, 1], [2, 3], [4, 5]], cueChannels: [6, 7], cueCount: 0, cueRevision
+};
+// Root-level JSON is reserved for captured runs consumed by the strict gate.
+const metadataDirectory = path.join(outputDirectory, "metadata");
+await mkdir(metadataDirectory, { recursive: true });
+await writeFile(path.join(metadataDirectory, `fixture-mixer-${format}-metadata.json`), JSON.stringify(transportFixture, null, 2));
 const track = {
   id: "audio-audit", title: "Audio audit · three independent signals",
   folderId: null, sourceType: "imported", duration,
@@ -78,7 +96,7 @@ const auditPlugin: Plugin = {
           for await (const chunk of request) chunks.push(Buffer.from(chunk));
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { runId: string; cases: unknown[]; complete: boolean };
           const runId = body.runId.replace(/[^a-zA-Z0-9_-]/g, "_");
-          await writeFile(path.join(outputDirectory, `${runId}.json`), JSON.stringify(body, null, 2));
+          await writeFile(path.join(outputDirectory, `${runId}.json`), JSON.stringify({ ...body, transportFixture }, null, 2));
           console.log(JSON.stringify({ runId, cases: body.cases.length, complete: body.complete }));
           json({ ok: true });
           return;
@@ -105,7 +123,10 @@ const auditPlugin: Plugin = {
           });
           return;
         }
-        if (url.pathname === "/api/tracks/audio-audit/mixer") { json({ mediaUrl: "/media/audio-audit-mixer.wav" }); return; }
+        if (url.pathname === "/api/tracks/audio-audit/mixer") {
+          json({ mediaUrl: "/media/audio-audit-mixer.wav", cueRevision });
+          return;
+        }
         if (url.pathname === "/api/tracks") { json({ tracks: [track] }); return; }
         if (url.pathname === "/api/folders") { json({ folders: [] }); return; }
         if (url.pathname.startsWith("/api/tracks/audio-audit")) { json({ track }); return; }

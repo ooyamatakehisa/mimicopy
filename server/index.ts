@@ -15,7 +15,7 @@ import {
   type BeatGrid
 } from "./beatAnalysis.js";
 import { installGlobalHttpDispatcher } from "./httpDispatcher.js";
-import { createMixerMediaService, MixerMediaError } from "./mixerMedia.js";
+import { createMixerMediaService, MixerMediaError, type MixerMediaResult } from "./mixerMedia.js";
 import {
   createLibraryStore,
   type LibraryBeatAnalysis,
@@ -653,7 +653,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.get(
     "/api/tracks/:trackId/mixer",
-    async (request: Request<{ trackId: string }>, response: Response<{ mediaUrl: string } | { error: string }>) => {
+    async (request: Request<{ trackId: string }>, response: Response<MixerMediaResult | { error: string }>) => {
       try {
         response.json(await mixerMedia.get(getTrackId(request)));
       } catch (error) {

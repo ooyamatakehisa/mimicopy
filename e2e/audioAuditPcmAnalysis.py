@@ -1,14 +1,19 @@
-"""Inspect retained WAV/unity-rate PCM; successful analysis is not a regression pass.
+"""Inspect retained lossless/unity-rate PCM; analysis is not a regression pass.
 
-Only NumPy is required. Whole-segment checks need an unmuted, unity-gain anchor
-channel and the exact six-channel PCM16 fixture used to produce the capture.
+NumPy is required; FLAC fixtures also need ffmpeg. Whole-segment checks need an
+unmuted, unity-gain anchor and the exact PCM16 fixture used for the capture.
+Legacy six-channel WAV, retained eight-channel FLAC, and current eight-channel
+RIFF/RF64 WAV retain the same six music channels; cue lanes are excluded from
+source matching and gain reconstruction. The decoded container is reported.
 Absent, ambiguous, nonunity, and out-of-range matches remain unresolved.
 """
 
 import argparse
 import base64
 import json
+import os
 import struct
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -18,20 +23,57 @@ FREQUENCIES = np.array([375, 1875, 750, 2250, 1500, 2625])
 SAMPLE_RATE = 48000
 
 
-def read_fixture(path, search_seconds):
-    """Read chunk headers rather than assuming a fixed WAV header size."""
+def read_wav_fixture(path, search_seconds):
+    """Read RIFF/RF64 chunks, including ds64 sizes, without loading the PCM."""
+    file_size = path.stat().st_size
     with path.open('rb') as wav:
         header = wav.read(12)
-        if len(header) != 12 or header[:4] != b'RIFF' or header[8:] != b'WAVE':
-            raise ValueError('Fixture must be a RIFF WAVE file')
+        if len(header) != 12 or header[:4] not in (b'RIFF', b'RF64') or header[8:] != b'WAVE':
+            raise ValueError('Fixture must be a RIFF/RF64 WAVE file')
+        is_rf64 = header[:4] == b'RF64'
+        declared_size = struct.unpack_from('<I', header, 4)[0]
+        if is_rf64 != (declared_size == 0xffffffff):
+            raise ValueError('Invalid RIFF/RF64 size marker')
+        riff_end = file_size if is_rf64 else declared_size + 8
+        if riff_end < 12 or riff_end > file_size:
+            raise ValueError('Invalid or truncated WAV container size')
         fmt = None
         data = None
-        while chunk_header := wav.read(8):
+        ds64 = None
+        extended_sizes = {}
+        while wav.tell() < riff_end:
+            chunk_header = wav.read(8)
             if len(chunk_header) != 8:
                 raise ValueError('Truncated WAV chunk header')
             kind, length = struct.unpack('<4sI', chunk_header)
             start = wav.tell()
-            if kind == b'fmt ':
+            if is_rf64 and ds64 is None and kind != b'ds64':
+                raise ValueError('RF64 fixture must begin with a ds64 chunk')
+            if length == 0xffffffff:
+                if ds64 is None:
+                    raise ValueError('WAV size marker requires ds64')
+                if kind == b'data':
+                    length = ds64['dataSize']
+                elif extended_sizes.get(kind):
+                    length = extended_sizes[kind].pop(0)
+                else:
+                    raise ValueError('RF64 chunk is missing its ds64 table size')
+            if start + length + length % 2 > riff_end:
+                raise ValueError('Invalid or truncated WAV chunk data')
+            if kind == b'ds64' and is_rf64:
+                if ds64 is not None or length < 28:
+                    raise ValueError('Invalid RF64 ds64 chunk')
+                riff_size, data_size, sample_count, table_length = struct.unpack('<QQQI', wav.read(28))
+                if length != 28 + table_length * 12:
+                    raise ValueError('Invalid RF64 ds64 table length')
+                riff_end = riff_size + 8
+                if riff_end > file_size or riff_end < start + length:
+                    raise ValueError('Invalid or truncated RF64 container size')
+                ds64 = dict(dataSize=data_size, sampleCount=sample_count)
+                for _ in range(table_length):
+                    chunk_id, chunk_size = struct.unpack('<4sQ', wav.read(12))
+                    extended_sizes.setdefault(chunk_id, []).append(chunk_size)
+            elif kind == b'fmt ':
                 fmt = wav.read(min(length, 40))
             elif kind == b'data':
                 data = (start, length)
@@ -43,13 +85,66 @@ def read_fixture(path, search_seconds):
     encoding, channels, sample_rate, _, block_align, bits = struct.unpack_from('<HHIIHH', fmt)
     extensible_pcm = (encoding == 0xfffe and len(fmt) >= 40 and
                       fmt[24:40] == bytes.fromhex('0100000000001000800000aa00389b71'))
-    if (encoding != 1 and not extensible_pcm) or (channels, sample_rate, block_align, bits) != (6, SAMPLE_RATE, 12, 16):
-        raise ValueError('Fixture must be six-channel, 48 kHz, PCM16 WAV')
+    if ((encoding != 1 and not extensible_pcm) or channels not in (6, 8) or
+            sample_rate != SAMPLE_RATE or block_align != channels * 2 or bits != 16):
+        raise ValueError('Fixture must be six/eight-channel, 48 kHz, PCM16 WAV')
     start, length = data
-    if not length or length % 12 or start + length > path.stat().st_size:
+    if not length or length % block_align or start + length > riff_end:
         raise ValueError('Invalid or truncated fixture data')
-    pcm = np.memmap(path, dtype='<i2', mode='r', offset=start, shape=(length // 12, 6))
-    return pcm[:min(len(pcm), int(search_seconds * SAMPLE_RATE))]
+    if ds64 is not None and (ds64['dataSize'] != length or
+                            ds64['sampleCount'] not in (0, length // block_align)):
+        raise ValueError('RF64 ds64 data size or sample count disagrees with PCM frames')
+    pcm = np.memmap(path, dtype='<i2', mode='r', offset=start, shape=(length // block_align, channels))
+    metadata = dict(container='wav', riffType=header[:4].decode('ascii'), codec='pcm_s16le',
+                    channels=channels, sampleRate=sample_rate, bitsPerSample=bits,
+                    frames=len(pcm), analyzedMusicChannels=6, cueChannelCount=channels - 6)
+    return pcm[:min(len(pcm), int(search_seconds * SAMPLE_RATE)), :6], metadata
+
+
+def default_ffmpeg():
+    bundled = Path(__file__).resolve().parents[1] / 'node_modules' / 'ffmpeg-static' / 'ffmpeg'
+    return os.environ.get('FFMPEG_PATH') or (str(bundled) if bundled.is_file() else 'ffmpeg')
+
+
+def load_fixture(path, search_seconds, ffmpeg_path=None):
+    with path.open('rb') as file:
+        header = file.read(42)
+    if header[:4] != b'fLaC':
+        return read_wav_fixture(path, search_seconds)
+    if len(header) != 42 or header[4] & 0x7f or int.from_bytes(header[5:8], 'big') != 34:
+        raise ValueError('FLAC fixture is missing STREAMINFO')
+    info = int.from_bytes(header[18:26], 'big')
+    sample_rate = info >> 44
+    channels = ((info >> 41) & 7) + 1
+    bits = ((info >> 36) & 31) + 1
+    total_frames = info & ((1 << 36) - 1)
+    if (sample_rate, channels, bits) != (SAMPLE_RATE, 8, 16) or total_frames == 0:
+        raise ValueError('FLAC fixture must be eight-channel, 48 kHz, PCM16 with a known frame count')
+    frames = min(total_frames, int(search_seconds * SAMPLE_RATE))
+    if frames == 0:
+        raise ValueError('Fixture search range contains no complete sample frames')
+    # Decode only the requested prefix, preserving every channel and PCM16 bit.
+    # No downmix, resampling, gain adjustment, or approximate matching is used.
+    command = [ffmpeg_path or default_ffmpeg(), '-nostdin', '-hide_banner', '-loglevel', 'error',
+               '-i', str(path), '-map', '0:a:0', '-t', f'{frames / SAMPLE_RATE:.9f}',
+               '-c:a', 'pcm_s16le', '-f', 's16le', 'pipe:1']
+    try:
+        decoded = subprocess.run(command, check=True, capture_output=True, timeout=60).stdout
+    except FileNotFoundError as error:
+        raise ValueError('FLAC analysis requires ffmpeg; pass --ffmpeg or set FFMPEG_PATH') from error
+    except subprocess.CalledProcessError as error:
+        raise ValueError('FLAC decoding failed: ' + error.stderr.decode('utf8', errors='replace')) from error
+    if len(decoded) != frames * channels * 2:
+        raise ValueError('Decoded FLAC fixture has a truncated or unexpected sample count')
+    pcm = np.frombuffer(decoded, dtype='<i2').reshape(frames, channels)
+    metadata = dict(container='flac', channels=channels, sampleRate=sample_rate, bitsPerSample=bits,
+                    frames=total_frames, decodedFrames=frames, analyzedMusicChannels=6, cueChannelCount=2)
+    return pcm[:, :6], metadata
+
+
+def read_fixture(path, search_seconds, ffmpeg_path=None):
+    """Keep the existing six-music-channel array interface for diagnostic callers."""
+    return load_fixture(path, search_seconds, ffmpeg_path)[0]
 
 
 def decode(value):
@@ -293,7 +388,9 @@ def positive_number(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('capture', type=Path)
-    parser.add_argument('--fixture', type=Path, help='Defaults to fixture-mixer-wav.wav beside the capture')
+    parser.add_argument('--fixture', type=Path,
+                        help='Use recorded fixture metadata, otherwise WAV (RIFF/RF64) or retained FLAC beside the capture')
+    parser.add_argument('--ffmpeg', help='FLAC decoder; defaults to FFMPEG_PATH, bundled ffmpeg-static, or PATH')
     parser.add_argument('--output', type=Path, help='Defaults to a derived pcm-analysis JSON beside the capture')
     parser.add_argument('--search-seconds', type=positive_number, default=24,
                         help='Search this many fixture seconds from its beginning (default: 24); out-of-range matches remain unresolved')
@@ -305,11 +402,24 @@ def main():
                         help='Include every reconstructed sample; output can be large')
     options = parser.parse_args()
     input_path = options.capture.resolve()
-    fixture_path = options.fixture.resolve() if options.fixture else input_path.parent / 'fixture-mixer-wav.wav'
-    reference = read_fixture(fixture_path, options.search_seconds)
+    document = json.loads(input_path.read_text())
+    if options.fixture:
+        fixture_path = options.fixture.resolve()
+    else:
+        recorded_name = document.get('transportFixture', {}).get('filename')
+        if recorded_name:
+            if not isinstance(recorded_name, str) or Path(recorded_name).name != recorded_name:
+                parser.error('recorded fixture filename must be a filename within the capture directory')
+            fixture_path = input_path.parent / recorded_name
+        else:
+            # Reports without metadata keep the original WAV-first selection.
+            # Never substitute a new fixture for retained container evidence.
+            fixture_path = input_path.parent / 'fixture-mixer-wav.wav'
+            if not fixture_path.is_file():
+                fixture_path = input_path.parent / 'fixture-mixer-wav.flac'
+    reference, fixture_format = load_fixture(fixture_path, options.search_seconds, options.ffmpeg)
     if len(reference) < 128:
         parser.error('fixture search range must contain at least 128 frames')
-    document = json.loads(input_path.read_text())
     results = []
     for case in document['cases']:
         try:
@@ -325,8 +435,8 @@ def main():
         activeSegments=sum(len(item['segments']) for item in timelines),
         allActiveSegmentsExact=bool(results) and len(timelines) == len(results) and
             all(item['status'] == 'exact' for item in timelines))
-    output = dict(input=str(input_path), fixture=str(fixture_path), referenceFrames=len(reference),
-        scope='Diagnostic only: exact WAV fixture, 1x, zero transpose, unmuted unity anchor; missing or nonunity matches are unresolved. Successful analysis is not a regression pass.',
+    output = dict(input=str(input_path), fixture=str(fixture_path), fixtureFormat=fixture_format, referenceFrames=len(reference),
+        scope='Diagnostic only: exact lossless PCM16 fixture, 1x, zero transpose, unmuted unity anchor; missing or nonunity matches are unresolved. Successful analysis is not a regression pass.',
         method='Whole active-segment consecutive fixture matching; per-sample stereo gain reconstruction; source/final spectral comparison and thresholded discontinuity localization.',
         summary=summary, cases=results)
     output_path = options.output or input_path.parent / ('pcm-analysis-' + input_path.stem + '.json')

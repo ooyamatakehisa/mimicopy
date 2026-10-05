@@ -1,4 +1,4 @@
 interface:
   display_name: "Mimicopy音声回帰テスト"
-  short_description: "Mimicopyの3音源同期・ソロ・ミュートを実音声で再検証する"
-  default_prompt: "$mimicopy-audio-regression を使って、変更後の3音源の同期・ソロ・ミュートを検証し、以前の結果と比較して。"
+  short_description: "Mimicopyの3音源・クリック同期とソロ・ミュートを実音声で再検証する"
+  default_prompt: "$mimicopy-audio-regression を使って、変更後の3音源とクリックの同期・ソロ・ミュートを検証し、以前の結果と比較して。"
