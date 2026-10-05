@@ -1,3 +1,5 @@
+import { getClickCueRevisionInput } from "../../server/clickCueFormat";
+import type { BeatGrid } from "./beats";
 import type { Marker } from "./markers";
 import { parseTrackBeatAnalysisResponse } from "./beats";
 import {
@@ -51,12 +53,20 @@ export async function fetchTrack(trackId: string) {
   return parseTrackResponse(body);
 }
 
-export async function fetchTrackMixer(trackId: string): Promise<string> {
+export class MixerCueRevisionError extends Error {
+  constructor() { super("拍情報が更新されました。同期再生用の音源を準備し直しています。"); }
+}
+
+export async function fetchTrackMixer(trackId: string, beatGrid: BeatGrid | null): Promise<string> {
   const response = await fetch(`/api/tracks/${encodeURIComponent(trackId)}/mixer`);
+  if (response.status === 409) throw new MixerCueRevisionError();
   const body = await parseJsonResponse(response, "同期再生用の音源を準備できませんでした。");
   if (!body || typeof body !== "object" || !("mediaUrl" in body) || typeof body.mediaUrl !== "string") {
     throw new Error("同期再生用の音源情報が不正です。");
   }
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(getClickCueRevisionInput(beatGrid)));
+  const expectedRevision = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (!("cueRevision" in body) || body.cueRevision !== expectedRevision) throw new MixerCueRevisionError();
   return body.mediaUrl;
 }
 

@@ -1,3 +1,5 @@
+import { createHash, webcrypto } from "node:crypto";
+import { getClickCueRevisionInput } from "../server/clickCueFormat";
 import {
   act,
   fireEvent,
@@ -10,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { TrackEditorPage } from "./features/track/TrackEditorPage";
-import { decodedTrackQueryKey, trackQueryKey } from "./lib/api";
+import { beatGridQueryKey, decodedTrackQueryKey, trackQueryKey } from "./lib/api";
 import type { TrackBeatAnalysis } from "./lib/beats";
 import type { TrackDetail, TrackSummary } from "./lib/library";
 
@@ -22,6 +24,18 @@ vi.mock("./lib/pitchProcessor", () => ({
     prepare: async () => {}, updatePitch: async () => {}, dispose: vi.fn()
   })
 }));
+
+vi.mock("./lib/clickCueProcessor", () => ({
+  createClickCueProcessor: async () => ({
+    node: { connect: vi.fn(), disconnect: vi.fn() },
+    prepare: async () => {}, setEnabled: vi.fn(), dispose: vi.fn()
+  })
+}));
+
+function createMixerResponse(analysis: TrackBeatAnalysis) {
+  return { mediaUrl: "/media/track-1-mixer.wav",
+    cueRevision: createHash("sha256").update(getClickCueRevisionInput(analysis.beatGrid)).digest("hex") };
+}
 
 const baseTimestamp = "2026-07-15T00:00:00.000Z";
 
@@ -94,6 +108,14 @@ describe("App", () => {
   let tracks: TrackDetail[];
 
   beforeEach(() => {
+    // Keep hashing deterministic alongside fake marker-save timers. API tests
+    // separately exercise the real asynchronous Web Crypto implementation.
+    vi.stubGlobal("crypto", { randomUUID: webcrypto.randomUUID.bind(webcrypto), subtle: {
+      digest: async (_algorithm: unknown, data: BufferSource) => {
+        const bytes = ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data);
+        return Uint8Array.from(createHash("sha256").update(bytes).digest()).buffer;
+      }
+    } });
     window.history.replaceState(null, "", "/");
     savedBeatAnalysis = createBeatAnalysis();
     tracks = [];
@@ -134,7 +156,7 @@ describe("App", () => {
         }
 
         if (url === "/api/tracks/track-1/mixer" && method === "GET") {
-          return Response.json({ mediaUrl: "/media/track-1-mixer.wav" });
+          return Response.json(createMixerResponse(savedBeatAnalysis));
         }
 
         if (url === "/api/tracks/track-1" && method === "PATCH") {
@@ -492,6 +514,229 @@ describe("App", () => {
     expect(within(zoomControls).getByText("1x")).toBeVisible();
   });
 
+  it.each([false, true])("replaces changed cue media only while idle (playing: %s)", async (playing) => {
+    const track = createTrack();
+    tracks = [track];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(trackQueryKey(track.id), track);
+    client.setQueryData(decodedTrackQueryKey(track.id, track.mediaUrl), { duration: 10, peaks: [] });
+    client.setQueryData(beatGridQueryKey(track.id), savedBeatAnalysis);
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => {
+      if (input !== "/api/tracks/track-1/mixer") return baseFetch(input, init);
+      const result = createMixerResponse(savedBeatAnalysis);
+      return Promise.resolve(Response.json({ ...result, mediaUrl: `/media/${result.cueRevision}.wav` }));
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    const { container, unmount } = render(<QueryClientProvider client={client}>
+      <TrackEditorPage trackId={track.id} navigateToLibrary={() => {}} />
+    </QueryClientProvider>);
+    try {
+      const click = screen.getByTitle("クリック音をオン/オフ");
+      await waitFor(() => expect(click).toBeEnabled());
+      const previous = container.querySelector("audio")!;
+      expect(previous.src).toContain(createMixerResponse(savedBeatAnalysis).cueRevision);
+      expect(container.querySelectorAll("audio")).toHaveLength(1);
+      fireEvent.click(click);
+      expect(click).toHaveAttribute("aria-pressed", "true");
+      if (playing) {
+        Object.defineProperties(previous, {
+          duration: { configurable: true, value: 10 }, readyState: { configurable: true, value: 4 }
+        });
+        fireEvent.loadedMetadata(previous);
+        fireEvent.click(screen.getByTitle("再生"));
+        Object.defineProperty(previous, "paused", { configurable: true, value: false });
+        fireEvent.play(previous);
+      }
+      const pauses = pause.mock.calls.length;
+      // Even identical analysis timestamps cannot reuse different cue samples.
+      savedBeatAnalysis = { ...savedBeatAnalysis, beatGrid: { ...savedBeatAnalysis.beatGrid!,
+        beats: [{ time: 0.75, position: 1, isDownbeat: true }], downbeats: [0.75] } };
+      act(() => client.setQueryData(beatGridQueryKey(track.id), savedBeatAnalysis));
+      if (playing) {
+        await waitFor(() => expect(screen.getByText(/再生を停止すると切り替わります/)).toBeVisible());
+        expect(container.querySelector("audio")).toBe(previous);
+        expect(pause).toHaveBeenCalledTimes(pauses);
+        expect(click).toBeDisabled();
+        expect(click).toHaveAttribute("aria-pressed", "false");
+        fireEvent.click(screen.getByTitle("停止"));
+      }
+      await waitFor(() => expect(container.querySelector("audio")?.src).toContain(createMixerResponse(savedBeatAnalysis).cueRevision));
+      expect(container.querySelector("audio")).not.toBe(previous);
+      expect(container.querySelectorAll("audio")).toHaveLength(1);
+      expect(click).toHaveAttribute("aria-pressed", "false");
+      await waitFor(() => expect(click).toBeEnabled());
+    } finally { unmount(); client.clear(); play.mockRestore(); pause.mockRestore(); load.mockRestore(); }
+  });
+
+  it("waits for the initial beat query before consuming automatic playback", async () => {
+    const track = createTrack();
+    tracks = [track];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(trackQueryKey(track.id), track);
+    client.setQueryData(decodedTrackQueryKey(track.id, track.mediaUrl), { duration: 10, peaks: [] });
+    let finishBeats = (_value: Response) => {};
+    const beatResponse = new Promise<Response>((resolve) => { finishBeats = resolve; });
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/beat-grid"
+      ? beatResponse : baseFetch(input, init));
+    const consumeAutoPlay = vi.fn();
+    const readyState = vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+    const duration = vi.spyOn(HTMLMediaElement.prototype, "duration", "get").mockReturnValue(10);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const { container, unmount } = render(<QueryClientProvider client={client}>
+      <TrackEditorPage trackId={track.id} navigateToLibrary={() => {}} sequence={{ autoPlayRequested: true,
+        nextTrackId: null, queueLabel: "Practice", advance: vi.fn(), consumeAutoPlay }} />
+    </QueryClientProvider>);
+    try {
+      await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+      expect(consumeAutoPlay).not.toHaveBeenCalled();
+      expect(play).not.toHaveBeenCalled();
+      await act(async () => { finishBeats(Response.json(savedBeatAnalysis)); });
+      await waitFor(() => expect(consumeAutoPlay).toHaveBeenCalledOnce());
+      expect(container.querySelector("audio")).toHaveAttribute("src", "/media/track-1-mixer.wav");
+      await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    } finally { unmount(); client.clear(); readyState.mockRestore(); duration.mockRestore(); play.mockRestore(); }
+  });
+
+  it("explains a cue preparation failure on an original-only track", async () => {
+    tracks = [createTrack()];
+    const fetchMock = vi.mocked(fetch);
+    const baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/mixer"
+      ? Promise.resolve(Response.json({ error: "Cue media preparation failed" }, { status: 500 }))
+      : baseFetch(input, init));
+    window.history.replaceState(null, "", "/tracks/track-1");
+    const { container } = render(<App />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Cue media preparation failed"));
+    expect(screen.getByTitle("クリック音をオン/オフ")).toBeDisabled();
+    expect(container.querySelector("audio")).toHaveAttribute("src", "/media/track-1.mp3");
+    await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+  });
+
+  it.each(["starting", "playing"] as const)("lets manual %s supersede automatic playback before an empty beat query completes", async (phase) => {
+    const track = createTrack();
+    tracks = [track];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(trackQueryKey(track.id), track);
+    client.setQueryData(decodedTrackQueryKey(track.id, track.mediaUrl), { duration: 10, peaks: [] });
+    let finishBeats = (_response: Response) => {};
+    const waiting = new Promise<Response>((resolve) => { finishBeats = resolve; });
+    const fetchMock = vi.mocked(fetch), baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/beat-grid" ? waiting : baseFetch(input, init));
+    const consumeAutoPlay = vi.fn();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    const { container, unmount } = render(<QueryClientProvider client={client}>
+      <TrackEditorPage trackId={track.id} navigateToLibrary={() => {}} sequence={{
+        autoPlayRequested: true, nextTrackId: null, queueLabel: "Practice", advance: vi.fn(), consumeAutoPlay
+      }} />
+    </QueryClientProvider>);
+    try {
+      await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+      expect(play).not.toHaveBeenCalled();
+      const original = container.querySelector("audio")!;
+      Object.defineProperties(original, {
+        duration: { configurable: true, value: 10 }, readyState: { configurable: true, value: 4 }
+      });
+      fireEvent.loadedMetadata(original);
+      // Keyboard and button toggles both own manual intent.
+      fireEvent.keyDown(window, { key: "k" });
+      expect(consumeAutoPlay).toHaveBeenCalledOnce();
+      expect(play).toHaveBeenCalledOnce();
+      Object.defineProperty(original, "paused", { configurable: true, value: false });
+      if (phase === "playing") fireEvent.play(original);
+      const pauses = pause.mock.calls.length;
+      await act(async () => { finishBeats(Response.json({ ...savedBeatAnalysis,
+        beatGrid: { ...savedBeatAnalysis.beatGrid!, beats: [], downbeats: [] }
+      })); });
+      await waitFor(() => expect(screen.getByText("0 beats / 0 downbeats")).toBeInTheDocument());
+      expect(container.querySelector("audio")).toBe(original);
+      expect(screen.getByTitle("停止")).toBeEnabled();
+      expect(pause).toHaveBeenCalledTimes(pauses);
+      expect(play).toHaveBeenCalledOnce();
+      expect(consumeAutoPlay).toHaveBeenCalledOnce();
+    } finally { unmount(); client.clear(); play.mockRestore(); pause.mockRestore(); load.mockRestore(); }
+  });
+
+  it.each(["starting", "playing", "seeking", "changing rate"] as const)("keeps manual original-only audio %s until Stop and discards the queued automatic request", async (phase) => {
+    const track = createTrack();
+    tracks = [track];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(trackQueryKey(track.id), track);
+    client.setQueryData(decodedTrackQueryKey(track.id, track.mediaUrl), { duration: 10, peaks: [] });
+    client.setQueryData(beatGridQueryKey(track.id), savedBeatAnalysis);
+    let finishMixer = (_response: Response) => {};
+    const waiting = new Promise<Response>((resolve) => { finishMixer = resolve; });
+    const fetchMock = vi.mocked(fetch), baseFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => input === "/api/tracks/track-1/mixer" ? waiting : baseFetch(input, init));
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    const consumeAutoPlay = vi.fn();
+    const { container, unmount } = render(<QueryClientProvider client={client}>
+      <TrackEditorPage trackId={track.id} navigateToLibrary={() => {}} sequence={{
+        autoPlayRequested: true, nextTrackId: null, queueLabel: "Practice", advance: vi.fn(), consumeAutoPlay
+      }} />
+    </QueryClientProvider>);
+    try {
+      await waitFor(() => expect(screen.getByTitle("再生")).toBeEnabled());
+      const original = container.querySelector("audio")!;
+      expect(original).toHaveAttribute("src", track.mediaUrl);
+      Object.defineProperties(original, {
+        duration: { configurable: true, value: 10 }, readyState: { configurable: true, value: 4 }
+      });
+      fireEvent.loadedMetadata(original);
+      original.currentTime = 3;
+      fireEvent.timeUpdate(original);
+      fireEvent.click(screen.getByTitle("再生"));
+      await waitFor(() => expect(play).toHaveBeenCalledOnce());
+      expect(consumeAutoPlay).toHaveBeenCalledOnce();
+      Object.defineProperty(original, "paused", { configurable: true, value: false });
+      if (phase !== "starting") fireEvent.play(original);
+      if (phase === "seeking" || phase === "changing rate") {
+        // Keep native restoration pending after the user's action. The
+        // playing flag is now false; their queued play intent must still pin
+        // this source when the background cue request completes.
+        Object.defineProperty(original, "readyState", { configurable: true, value: 0 });
+        if (phase === "seeking") fireEvent.keyDown(window, { key: "ArrowRight" });
+        else fireEvent.click(screen.getByTitle("速度を下げる"));
+        expect(load).toHaveBeenCalledOnce();
+      }
+      const expectedCursor = phase === "seeking" ? 8 : 3;
+      const pauses = pause.mock.calls.length;
+      await act(async () => { finishMixer(Response.json(createMixerResponse(savedBeatAnalysis))); });
+      await waitFor(() => expect(screen.getByText(/再生を停止すると切り替わります/)).toBeVisible());
+      expect(container.querySelector("audio")).toBe(original);
+      expect(screen.getByTitle("停止")).toBeEnabled();
+      expect(screen.getByTitle("クリック音をオン/オフ")).toBeDisabled();
+      expect(pause).toHaveBeenCalledTimes(pauses);
+      expect(play).toHaveBeenCalledOnce();
+      fireEvent.click(screen.getByTitle("停止"));
+      await waitFor(() => expect(container.querySelector("audio")).toHaveAttribute("src", "/media/track-1-mixer.wav"));
+      const replacement = container.querySelector("audio")!;
+      expect(replacement).not.toBe(original);
+      expect(play).toHaveBeenCalledOnce();
+      expect(screen.getByLabelText("再生位置")).toHaveAttribute("aria-valuenow", String(expectedCursor));
+      Object.defineProperties(replacement, {
+        duration: { configurable: true, value: 10 }, readyState: { configurable: true, value: 4 }
+      });
+      fireEvent.loadedMetadata(replacement);
+      expect(replacement.currentTime).toBe(expectedCursor);
+      if (phase === "changing rate") expect(replacement.playbackRate).toBe(0.75);
+      await waitFor(() => expect(screen.getByTitle("クリック音をオン/オフ")).toBeEnabled());
+      expect(screen.getByTitle("クリック音をオン/オフ")).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByTitle("再生")).toBeEnabled();
+      expect(play).toHaveBeenCalledOnce();
+      expect(consumeAutoPlay).toHaveBeenCalledOnce();
+    } finally { unmount(); client.clear(); play.mockRestore(); pause.mockRestore(); load.mockRestore(); }
+  });
+
   it("keeps all mixer controls on one completed-separation transport", async () => {
     tracks = [
       createTrack({
@@ -568,7 +813,8 @@ describe("App", () => {
     expect(container.querySelectorAll("audio")).toHaveLength(1);
   });
 
-  it("preserves dirty markers, cursor and settings when late separation prepares a mixer", async () => {
+  it("defers late separation until Stop while preserving dirty markers, cursor and settings", async () => {
+    savedBeatAnalysis = { ...createBeatAnalysis(), status: "running", beatGrid: null };
     const running = createTrack({ separation: {
       createdAt: baseTimestamp, updatedAt: baseTimestamp, error: null,
       mediaUrl: null, remainderMediaUrl: null, progress: null,
@@ -634,10 +880,20 @@ describe("App", () => {
       expect(screen.getByLabelText("Unsent phrase time")).toHaveValue("0:04");
       expect(markerWrites()).toHaveLength(0);
 
+      const pausesBeforeCompletion = pause.mock.calls.length;
       await act(async () => {
-        finishMixer(Response.json({ mediaUrl: "/media/track-1-mixer.wav" }));
+        finishMixer(Response.json(createMixerResponse(savedBeatAnalysis)));
         await vi.advanceTimersByTimeAsync(1);
       });
+      // The same deferred handoff applies to separation and original-only cues:
+      // completing background work must never stop an active listening session.
+      expect(container.querySelector("audio")).toBe(original);
+      expect(screen.getByTitle("停止")).toBeEnabled();
+      expect(screen.getByText(/再生を停止すると切り替わります/)).toBeVisible();
+      expect(screen.getByTitle("ギターをソロ")).toBeDisabled();
+      expect(pause).toHaveBeenCalledTimes(pausesBeforeCompletion);
+      fireEvent.click(screen.getByTitle("停止"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
       const replacement = container.querySelector("audio")!;
       expect(replacement).not.toBe(original);
       expect(replacement).toHaveAttribute("src", "/media/track-1-mixer.wav");

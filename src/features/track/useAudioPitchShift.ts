@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   configurePlaybackAudioSession,
   type AudioSessionNavigator
 } from "../../lib/audioSession";
 import { clampMixerVolume, getMixerGainAtTime, type MixerChannelId, type MixerGainRamp } from "../../lib/mixer";
+import type { ClickCueProcessor } from "../../lib/clickCueProcessor";
 import type { PitchProcessor } from "../../lib/pitchProcessor";
 import type { AudioProcessingControl } from "../../lib/audioProcessing";
 import type { PlaybackState } from "./usePlaybackState";
@@ -24,6 +25,9 @@ type PitchShiftGraph = {
   routingNodes: AudioNode[];
   channels: Map<MixerChannelId, AudioChannel>;
   processor: PitchProcessor | null;
+  clickProcessor: ClickCueProcessor | null;
+  clickInput: AudioNode | null;
+  clickOutput: GainNode | null;
   output: GainNode;
   control: AudioProcessingControl | null;
   cancellation: AbortController;
@@ -103,6 +107,8 @@ function disposeGraph(graph: PitchShiftGraph) {
     }
     graph.channels.clear();
     graph.processor?.dispose();
+    graph.clickProcessor?.dispose();
+    graph.clickOutput?.disconnect();
     graph.output.disconnect();
   } finally {
     void graph.context.close().catch(() => undefined);
@@ -128,6 +134,11 @@ export function useAudioPitchShift({
 }) {
   const graphRef = useRef<PitchShiftGraph | null>(null);
   const settingsRef = useRef({ originalVolume, remainderVolume, stemVolume, semitones });
+  const clickEnabledRef = useRef(false);
+  const setClickEnabled = useCallback((enabled: boolean) => {
+    clickEnabledRef.current = enabled;
+    graphRef.current?.clickProcessor?.setEnabled(enabled);
+  }, []);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [outputLatencySeconds, setOutputLatencySeconds] = useState(0);
   const [pitchShiftErrorMessage, setPitchShiftErrorMessage] = useState<string | null>(null);
@@ -189,7 +200,8 @@ export function useAudioPitchShift({
         output.connect(context.destination);
         graph = {
           context, element: audio, isMultichannel, routingNodes: [],
-          channels: new Map(), processor: null, output, control: null,
+          channels: new Map(), processor: null, clickProcessor: null, clickInput: null,
+          clickOutput: null, output, control: null,
           cancellation: new AbortController(),
           fail: () => undefined,
           ready, rejectReady, initializationDeadline: null, active: true, disposed: false
@@ -201,7 +213,7 @@ export function useAudioPitchShift({
         const source = context.createMediaElementSource(audio);
         graph.routingNodes.push(source);
         if (isMultichannel) {
-          const splitter = context.createChannelSplitter(6);
+          const splitter = context.createChannelSplitter(8);
           graph.routingNodes.push(splitter);
           source.connect(splitter);
           const channels = [
@@ -216,6 +228,19 @@ export function useAudioPitchShift({
             splitter.connect(stereo, index * 2 + 1, 1);
             addChannel(graph, id, stereo, level);
           }
+          // The last two lanes carry sample-aligned beat cues, independent of
+          // the three music gains and the pitch effect.
+          const cues = context.createChannelMerger(2);
+          graph.routingNodes.push(cues);
+          splitter.connect(cues, 6, 0);
+          splitter.connect(cues, 7, 1);
+          graph.clickInput = cues;
+          const clickOutput = context.createGain();
+          clickOutput.channelCount = 2;
+          clickOutput.channelCountMode = "explicit";
+          clickOutput.gain.value = 0;
+          clickOutput.connect(context.destination);
+          graph.clickOutput = clickOutput;
         } else {
           addChannel(graph, "original", source, settingsRef.current.originalVolume);
         }
@@ -224,6 +249,7 @@ export function useAudioPitchShift({
         const failGraph = (error: unknown) => {
           if (initializingGraph.disposed) return;
           initializingGraph.output.gain.setValueAtTime(0, context.currentTime);
+          initializingGraph.clickOutput?.gain.setValueAtTime(0, context.currentTime);
           audio.pause();
           rejectReady(error);
           if (initializingGraph.active) {
@@ -253,6 +279,18 @@ export function useAudioPitchShift({
             initializingGraph.processor = processor;
             processor.node.connect(output);
             for (const channel of initializingGraph.channels.values()) channel.gain.connect(processor.node);
+            if (initializingGraph.clickInput && initializingGraph.clickOutput) {
+              const { createClickCueProcessor } = await import("../../lib/clickCueProcessor");
+              if (initializingGraph.disposed) return;
+              const clickProcessor = await createClickCueProcessor({ context,
+                latencySeconds: processor.latencySeconds,
+                signal: initializingGraph.cancellation.signal, onError: failGraph });
+              if (initializingGraph.disposed) { clickProcessor.dispose(); return; }
+              initializingGraph.clickProcessor = clickProcessor;
+              initializingGraph.clickInput.connect(clickProcessor.node);
+              clickProcessor.node.connect(initializingGraph.clickOutput);
+              clickProcessor.setEnabled(clickEnabledRef.current);
+            }
             // Reconcile changes made while initialization was awaiting RPCs.
             await processor.updatePitch();
             if (initializingGraph.disposed) return;
@@ -260,12 +298,20 @@ export function useAudioPitchShift({
               element: audio,
               latencySeconds: processor.latencySeconds,
               silence: () => {
-                if (!initializingGraph.disposed) output.gain.setValueAtTime(0, context.currentTime);
+                if (!initializingGraph.disposed) {
+                  output.gain.setValueAtTime(0, context.currentTime);
+                  initializingGraph.clickOutput?.gain.setValueAtTime(0, context.currentTime);
+                }
               },
-              prepare: () => processor.prepare().catch((error: unknown) => { failGraph(error); throw error; }),
+              prepare: async () => {
+                try {
+                  await Promise.all([processor.prepare(), initializingGraph.clickProcessor?.prepare()]);
+                } catch (error) { failGraph(error); throw error; }
+              },
               open: () => {
                 if (initializingGraph.disposed) throw new Error("Audio graph is unavailable.");
                 output.gain.setValueAtTime(1, context.currentTime);
+                initializingGraph.clickOutput?.gain.setValueAtTime(1, context.currentTime);
               }
             };
             initializingGraph.control = control;
@@ -327,5 +373,5 @@ export function useAudioPitchShift({
     }
   }, [semitones]);
 
-  return { audioContext, outputLatencySeconds, pitchShiftErrorMessage };
+  return { audioContext, outputLatencySeconds, pitchShiftErrorMessage, setClickEnabled };
 }

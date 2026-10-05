@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AppHeader } from "../../components/layout/AppHeader";
 import { SectionHeader, Surface } from "../../components/ui/Surface";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -12,10 +13,12 @@ import {
   fetchTrackBeatAnalysis,
   fetchTrack,
   fetchTrackMixer,
+  MixerCueRevisionError,
   retryTrackBeatAnalysis,
   trackQueryKey
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
+import type { TrackBeatAnalysis } from "../../lib/beats";
 import type { TrackDetail } from "../../lib/library";
 import { useAutoNextTrack } from "./useAutoNextTrack";
 import type { PlaybackSequence } from "./usePlaybackSequence";
@@ -29,6 +32,7 @@ import { TransportControls } from "./TransportControls";
 import { useAudioPitchShift } from "./useAudioPitchShift";
 import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
+import { usePlaybackMedia } from "./usePlaybackMedia";
 import { usePlaybackState } from "./usePlaybackState";
 import { useStemMixer } from "./useStemMixer";
 import { useTranspose } from "./useTranspose";
@@ -59,6 +63,7 @@ export function TrackEditorPage({
   trackId,
   sequence
 }: TrackEditorPageProps) {
+  const queryClient = useQueryClient();
   const trackQuery = useQuery({
     queryFn: () => fetchTrack(trackId),
     queryKey: trackQueryKey(trackId),
@@ -86,12 +91,37 @@ export function TrackEditorPage({
       : ["track", trackId, "decoded"]
   });
 
+  const beatGridQuery = useQuery({
+    queryFn: () => fetchTrackBeatAnalysis(trackId),
+    queryKey: beatGridQueryKey(trackId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+
+      return status === "queued" || status === "running" ? 1000 : false;
+    }
+  });
+  const beatAnalysis = beatGridQuery.data ?? null;
+  const beatGrid = beatAnalysis?.beatGrid ?? null;
   const hasSeparatedMedia = track?.separation?.status === "completed" &&
     Boolean(track.separation.mediaUrl && track.separation.remainderMediaUrl);
+  const needsMixer = hasSeparatedMedia || Boolean(beatGrid?.beats.length);
   const mixerQuery = useQuery({
-    enabled: hasSeparatedMedia,
-    queryKey: ["track", trackId, "mixer", track?.separation?.mediaUrl, track?.separation?.remainderMediaUrl],
-    queryFn: () => fetchTrackMixer(trackId),
+    enabled: needsMixer && (Boolean(beatAnalysis) || beatGridQuery.isError),
+    queryKey: ["track", trackId, "mixer", track?.mediaUrl, track?.separation?.mediaUrl,
+      track?.separation?.remainderMediaUrl, beatGrid],
+    queryFn: async () => {
+      try {
+        return await fetchTrackMixer(trackId, beatGrid);
+      } catch (error) {
+        if (error instanceof MixerCueRevisionError) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: beatGridQueryKey(trackId), exact: true }),
+            queryClient.invalidateQueries({ queryKey: trackQueryKey(trackId), exact: true })
+          ]);
+        }
+        throw error;
+      }
+    },
     staleTime: Infinity
   });
 
@@ -133,8 +163,12 @@ export function TrackEditorPage({
     <TrackEditor
       key={track.id}
       sequence={sequence}
-      mixerMediaUrl={hasSeparatedMedia ? mixerQuery.data ?? null : null}
-      mixerPreparationMessage={hasSeparatedMedia && !mixerQuery.data
+      beatAnalysis={beatAnalysis}
+      beatQueryError={beatGridQuery.error}
+      isLoadingBeatGrid={beatGridQuery.isLoading}
+      needsMixer={needsMixer}
+      mixerMediaUrl={needsMixer ? mixerQuery.data ?? null : null}
+      mixerPreparationMessage={needsMixer && !mixerQuery.data
         ? mixerQuery.isError
           ? getErrorMessage(mixerQuery.error, "同期再生用の音源を準備できませんでした。")
           : "同期再生用の音源を準備しています。原音は引き続き再生できます。"
@@ -180,6 +214,10 @@ function TrackLoadingPanel({
 
 function TrackEditor({
   decoded,
+  beatAnalysis,
+  beatQueryError,
+  isLoadingBeatGrid,
+  needsMixer,
   mixerMediaUrl,
   mixerPreparationMessage,
   mixerPreparationFailed,
@@ -188,6 +226,10 @@ function TrackEditor({
   sequence
 }: {
   decoded: DecodedAudio;
+  beatAnalysis: TrackBeatAnalysis | null;
+  beatQueryError: Error | null;
+  isLoadingBeatGrid: boolean;
+  needsMixer: boolean;
   mixerMediaUrl: string | null;
   mixerPreparationMessage: string | null;
   mixerPreparationFailed: boolean;
@@ -196,23 +238,13 @@ function TrackEditor({
   sequence?: PlaybackSequence;
 }) {
   const queryClient = useQueryClient();
-  const beatGridQuery = useQuery({
-    queryFn: () => fetchTrackBeatAnalysis(track.id),
-    queryKey: beatGridQueryKey(track.id),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-
-      return status === "queued" || status === "running" ? 1000 : false;
-    }
-  });
   const beatGridMutation = useMutation({
     mutationFn: () => retryTrackBeatAnalysis(track.id),
     onSuccess: (analysis) => {
       queryClient.setQueryData(beatGridQueryKey(track.id), analysis);
     }
   });
-  const beatAnalysis = beatGridQuery.data ?? null;
-  const beatGrid = beatGridQuery.data?.beatGrid ?? null;
+  const beatGrid = beatAnalysis?.beatGrid ?? null;
   const autoNext = useAutoNextTrack(sequence);
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
@@ -220,16 +252,42 @@ function TrackEditor({
     trackId: track.id,
     onPlaybackEnded: autoNext.onPlaybackEnded
   });
+  // The request belongs to this editor, not to a particular native element.
+  // A manual Play/Stop supersedes it even while beat or mixer queries wait.
+  const autoPlayConsumedRef = useRef(false);
+  const [autoPlayConsumed, setAutoPlayConsumed] = useState(false);
+  const consumeAutoPlay = useCallback(() => {
+    if (autoPlayConsumedRef.current) return false;
+    autoPlayConsumedRef.current = true;
+    setAutoPlayConsumed(true);
+    sequence?.consumeAutoPlay();
+    return true;
+  }, [sequence]);
+  const controlsPlayback = useMemo(() => ({
+    ...playback,
+    togglePlayback: () => {
+      if (sequence?.autoPlayRequested) consumeAutoPlay();
+      playback.togglePlayback();
+    }
+  }), [consumeAutoPlay, playback, sequence?.autoPlayRequested]);
   const mixer = useStemMixer();
   const transpose = useTranspose();
-  const playbackMediaUrl = mixerMediaUrl ?? track.mediaUrl;
+  const media = usePlaybackMedia({
+    mediaUrl: mixerMediaUrl ?? track.mediaUrl,
+    kind: !mixerMediaUrl ? "original" : track.separation?.status === "completed" ? "separated" : "cue-original"
+  }, playback.isPlaying || playback.isPlayPending);
+  const playbackMediaUrl = media.active.mediaUrl;
+  const hasCurrentCueTransport = media.active.kind !== "original" && playbackMediaUrl === mixerMediaUrl;
+  const activeMixerMessage = media.deferred && mixerMediaUrl
+    ? "同期再生用の音源を準備できました。再生を停止すると切り替わります。"
+    : mixerPreparationMessage;
   const pitchShift = useAudioPitchShift({
     playback,
     mediaUrl: playbackMediaUrl,
     originalVolume: mixer.originalVolume,
     stemVolume: mixer.stemVolume,
     remainderVolume: mixer.remainderVolume,
-    isMultichannel: Boolean(mixerMediaUrl),
+    isMultichannel: media.active.kind !== "original",
     semitones: transpose.semitones
   });
   const markers = useMarkersState({
@@ -243,15 +301,15 @@ function TrackEditor({
   const clickTrack = useClickTrack({
     audioContext: pitchShift.audioContext,
     beatGrid,
-    outputLatencySeconds: pitchShift.outputLatencySeconds,
-    playback
+    hasCueTransport: hasCurrentCueTransport,
+    setEnabled: pitchShift.setClickEnabled
   });
   const beatGridErrorMessage =
     beatGridMutation.isError
       ? getErrorMessage(beatGridMutation.error, "拍解析に失敗しました。")
-      : beatGridQuery.isError
+      : beatQueryError
         ? getErrorMessage(
-            beatGridQuery.error,
+            beatQueryError,
             "拍解析の状態を読み込めませんでした。"
           )
         : beatAnalysis?.status === "failed"
@@ -262,25 +320,25 @@ function TrackEditor({
     markers.markerSaveErrorMessage ??
     clickTrack.clickErrorMessage ??
     pitchShift.pitchShiftErrorMessage ??
-    playback.durationErrorMessage;
+    playback.durationErrorMessage ??
+    (!track.separation && mixerPreparationFailed ? mixerPreparationMessage : null);
   const description = markers.isSavingMarkers ? "マーカー保存中" : errorMessage ??
+    (!track.separation ? activeMixerMessage : null) ??
     (!pitchShift.audioContext ? "音声処理を準備しています。" : null);
 
-  const hasPendingMixer = track.separation?.status === "completed" &&
-    Boolean(track.separation.mediaUrl && track.separation.remainderMediaUrl) &&
-    !mixerMediaUrl && !mixerPreparationFailed;
+  const hasPendingMixer = needsMixer && !mixerMediaUrl && !mixerPreparationFailed;
 
   const retryBeatAnalysis = () => {
-    clickTrack.resetScheduledBeats();
+    clickTrack.disableClickTrack();
     beatGridMutation.mutate();
   };
 
   return (
     <>
-      <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback}
-        autoPlay={sequence?.autoPlayRequested === true && Boolean(pitchShift.audioContext) && !hasPendingMixer}
-        onAutoPlayConsumed={sequence?.consumeAutoPlay} />
-      <KeyboardShortcuts markers={markers} playback={playback} />
+      <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback} audioContext={pitchShift.audioContext}
+        autoPlay={sequence?.autoPlayRequested === true && !autoPlayConsumed && !isLoadingBeatGrid && !hasPendingMixer && !media.deferred}
+        onAutoPlayConsumed={consumeAutoPlay} />
+      <KeyboardShortcuts markers={markers} playback={controlsPlayback} />
       <Surface
         className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden rounded-2xl max-lg:contents"
         aria-label="Audio editor"
@@ -299,8 +357,8 @@ function TrackEditor({
           {track.separation ? (
             <StemMixer
               mixer={mixer}
-              mixerReady={Boolean(mixerMediaUrl)}
-              preparationMessage={mixerPreparationMessage}
+              mixerReady={media.active.kind === "separated"}
+              preparationMessage={activeMixerMessage}
               preparationFailed={mixerPreparationFailed}
               originalMediaUrl={track.mediaUrl}
               separation={track.separation}
@@ -341,11 +399,11 @@ function TrackEditor({
         beatGridErrorMessage={beatGridErrorMessage}
         clickTrack={clickTrack}
         isAnalyzingBeatGrid={beatGridMutation.isPending}
-        isLoadingBeatGrid={beatGridQuery.isLoading}
+        isLoadingBeatGrid={isLoadingBeatGrid}
         isPlaybackReady={Boolean(pitchShift.audioContext)}
         onRetryBeatAnalysis={retryBeatAnalysis}
         markers={markers}
-        playback={playback}
+        playback={controlsPlayback}
         transpose={transpose}
         waveform={waveform}
       />

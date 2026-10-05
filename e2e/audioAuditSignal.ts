@@ -54,6 +54,8 @@ export type AudioMeasurement = {
   expectedPlaybackRate: number;
   transposeSemitones?: number;
   contextState: AudioContextState;
+  /** Graph actually measured; absent on retained reports from earlier audits. */
+  transport?: AudioAuditTransport;
   rms: Record<AudioAuditChannel, number>;
   mixedRms: number;
   /** RMS within +/- 45 Hz of each source's carrier, measured in the actual mix. */
@@ -76,11 +78,19 @@ export type AudioMeasurement = {
   pairs: AudioAuditPair[];
 };
 
+export type AudioAuditTransport = {
+  sharedSourceChannels: 6 | 8 | null;
+  musicSourceCount: number;
+  cueChannelCount: 0 | 2;
+  sourceUrls: string[];
+};
+
 export type AudioAuditStatus = {
   ready: boolean;
   contextState: AudioContextState | null;
   sourceLabels: string[];
   destinationConnections: number;
+  transport: AudioAuditTransport | null;
   errors: string[];
 };
 
@@ -130,6 +140,8 @@ export function installAudioAuditProbe(): void {
   type ContextRecord = {
     context: AudioContext;
     sources: Map<number, AudioNode>;
+    mediaElements: Set<HTMLMediaElement>;
+    sharedSourceChannels: 6 | 8 | null;
     destinations: Map<AudioNode, Set<number>>;
     worklet: AudioWorkletNode | null;
     pending: Map<number, (data: RecordedCapture) => void>;
@@ -210,7 +222,8 @@ export function installAudioAuditProbe(): void {
     const existing = records.get(context);
     if (existing) return existing;
     const record: ContextRecord = {
-      context, sources: new Map(), destinations: new Map(), worklet: null, pending: new Map()
+      context, sources: new Map(), mediaElements: new Set(), sharedSourceChannels: null,
+      destinations: new Map(), worklet: null, pending: new Map()
     };
     records.set(context, record);
     const moduleUrl = URL.createObjectURL(new Blob([workletCode], { type: "text/javascript" }));
@@ -246,9 +259,12 @@ export function installAudioAuditProbe(): void {
     const result = Reflect.apply(nativeConnect, this,
       destination instanceof AudioNode ? [destination, output, input] : [destination, output]);
     if (mediaChannels.has(this) && typeof ChannelSplitterNode !== "undefined" &&
-      destination instanceof ChannelSplitterNode && destination.numberOfOutputs === 6) {
+      destination instanceof ChannelSplitterNode &&
+      (destination.numberOfOutputs === 6 || destination.numberOfOutputs === 8)) {
       const record = ensureRecord(this.context as AudioContext);
-      // A single six-channel media source feeds three stereo channel paths.
+      record.sharedSourceChannels = destination.numberOfOutputs;
+      // Preserve legacy six-channel discovery and the current eight-channel
+      // transport, whose final pair contains cues rather than a fourth source.
       // Discover those real paths rather than treating one clock as three clocks.
       for (const [index, source] of record.sources) {
         if (source === this) {
@@ -260,11 +276,11 @@ export function installAudioAuditProbe(): void {
       }
       sharedSplitters.add(destination);
     }
-    if (sharedSplitters.has(this) && destination instanceof AudioNode) {
+    if (sharedSplitters.has(this) && output < 6 && destination instanceof AudioNode) {
       mediaChannels.set(destination, Math.floor(output / 2));
     }
     const channel = mediaChannels.get(this);
-    if (channel !== undefined && typeof GainNode !== "undefined" && destination instanceof GainNode) {
+    if (channel !== undefined && channel < 3 && typeof GainNode !== "undefined" && destination instanceof GainNode) {
       const record = ensureRecord(this.context as AudioContext);
       const previous = record.sources.get(channel);
       if (previous !== destination) {
@@ -318,6 +334,7 @@ export function installAudioAuditProbe(): void {
       const index = labels.indexOf(element.getAttribute("aria-label") ?? "");
       if (index >= 0) {
         const record = ensureRecord(this);
+        record.mediaElements.add(element);
         mediaChannels.set(source, index);
         record.sources.set(index, source);
         if (record.worklet) connectTap(source, record.worklet, 0, index);
@@ -327,8 +344,15 @@ export function installAudioAuditProbe(): void {
   }
 
   const currentRecord = () => [...records.values()].reverse().find(
-    (record) => record.context.state !== "closed" && record.sources.size === 3
+    (record) => record.context.state !== "closed" && record.sources.size === 3 &&
+      [0, 1, 2].every((index) => record.sources.has(index))
   );
+  const transport = (record: ContextRecord): AudioAuditTransport => ({
+    sharedSourceChannels: record.sharedSourceChannels,
+    musicSourceCount: record.sources.size,
+    cueChannelCount: record.sharedSourceChannels === 8 ? 2 : 0,
+    sourceUrls: [...record.mediaElements].map((element) => element.currentSrc || element.src || "")
+  });
   const status = (): AudioAuditStatus => {
     const record = currentRecord();
     return {
@@ -336,6 +360,7 @@ export function installAudioAuditProbe(): void {
       contextState: record?.context.state ?? null,
       sourceLabels: record ? [...record.sources.keys()].map((index) => labels[index]) : [],
       destinationConnections: record ? [...record.destinations.values()].reduce((sum, outputs) => sum + outputs.size, 0) : 0,
+      transport: record ? transport(record) : null,
       errors: [...errors]
     };
   };
@@ -662,6 +687,7 @@ export function installAudioAuditProbe(): void {
       expectedPlaybackRate,
       transposeSemitones,
       contextState: record.context.state,
+      transport: transport(record),
       rms: { original: rms[0], stem: rms[1], remainder: rms[2] },
       mixedRms: rms[3],
       mixedToneRms: { original: mixed[0], stem: mixed[1], remainder: mixed[2] },

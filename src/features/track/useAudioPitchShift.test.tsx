@@ -12,13 +12,29 @@ type ProcessorMock = {
   semitones(): number;
   onError(error: Error): void;
 };
+type ClickProcessorMock = {
+  node: NodeMock;
+  context: ContextMock;
+  latencySeconds: number;
+  signal: AbortSignal;
+  prepare: ReturnType<typeof vi.fn>;
+  setEnabled: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  onError(error: Error): void;
+};
 const processing = vi.hoisted(() => ({
   effects: [] as ProcessorMock[],
+  clicks: [] as ClickProcessorMock[],
   fail: false,
+  clickFail: false,
   wait: Promise.resolve() as Promise<void>,
   importWait: Promise.resolve() as Promise<void>,
+  clickWait: Promise.resolve() as Promise<void>,
+  clickImportWait: Promise.resolve() as Promise<void>,
+  clickImportStarted: null as (() => void) | null,
   updateWait: Promise.resolve() as Promise<void>,
-  creationRequests: 0
+  creationRequests: 0,
+  clickCreationRequests: 0
 }));
 
 class NodeMock {
@@ -83,6 +99,8 @@ class ContextMock {
 }
 
 function props(): Parameters<typeof useAudioPitchShift>[0] {
+  const audio = document.createElement("audio");
+  audio.pause = vi.fn();
   return {
     isMultichannel: true,
     mediaUrl: "/mixer.wav",
@@ -91,7 +109,7 @@ function props(): Parameters<typeof useAudioPitchShift>[0] {
     remainderVolume: 1,
     semitones: 0,
     playback: {
-      audioRef: { current: document.createElement("audio") },
+      audioRef: { current: audio },
       audioContextRef: { current: null },
       audioGraphReadyRef: { current: null },
       audioProcessingRef: { current: null }
@@ -111,11 +129,17 @@ describe("useAudioPitchShift", () => {
     attachedElements = new WeakSet();
     ContextMock.instances = [];
     processing.effects.length = 0;
+    processing.clicks.length = 0;
     processing.fail = false;
+    processing.clickFail = false;
     processing.wait = Promise.resolve();
     processing.importWait = Promise.resolve();
+    processing.clickWait = Promise.resolve();
+    processing.clickImportWait = Promise.resolve();
+    processing.clickImportStarted = null;
     processing.updateWait = Promise.resolve();
     processing.creationRequests = 0;
+    processing.clickCreationRequests = 0;
     // Re-register the dynamic module per test so its import can remain pending
     // independently of the processor factory, without changing production APIs.
     vi.resetModules();
@@ -136,6 +160,24 @@ describe("useAudioPitchShift", () => {
         }
       };
     });
+    vi.doMock("../../lib/clickCueProcessor", async () => {
+      processing.clickImportStarted?.();
+      await processing.clickImportWait;
+      return {
+        createClickCueProcessor: async (options: {
+          context: ContextMock; latencySeconds: number; signal: AbortSignal; onError(error: Error): void;
+        }) => {
+          processing.clickCreationRequests++;
+          await processing.clickWait;
+          if (processing.clickFail) throw new Error("Click graph initialization failed");
+          const processor: ClickProcessorMock = {
+            ...options, node: new NodeMock(), prepare: vi.fn(async () => {}), setEnabled: vi.fn(), dispose: vi.fn()
+          };
+          processing.clicks.push(processor);
+          return processor;
+        }
+      };
+    });
     vi.stubGlobal("AudioContext", ContextMock);
   });
   afterEach(async () => {
@@ -145,7 +187,7 @@ describe("useAudioPitchShift", () => {
     vi.unstubAllGlobals();
   });
 
-  it("splits one source into three stereo pairs before delayed processor initialization", async () => {
+  it("splits one source into three music pairs and two cue lanes before delayed processor initialization", async () => {
     let release = () => {};
     processing.wait = new Promise<void>((resolve) => { release = resolve; });
     const initial = props();
@@ -157,21 +199,22 @@ describe("useAudioPitchShift", () => {
 
     expect(initial.playback.audioContextRef.current).toBeNull();
     expect(context.sources).toHaveLength(1);
-    expect(context.gains.map((gain) => gain.gain.value)).toEqual([0, 0, 0.5, 1]);
+    expect(context.gains.map((gain) => gain.gain.value)).toEqual([0, 0, 0.5, 1, 0]);
     expect(context.splitters).toHaveLength(1);
     const splitter = context.splitters[0];
-    expect(splitter.numberOfOutputs).toBe(6);
+    expect(splitter.numberOfOutputs).toBe(8);
     expect(context.sources[0].connect).toHaveBeenCalledExactlyOnceWith(splitter);
-    expect(context.mergers).toHaveLength(3);
+    expect(context.mergers).toHaveLength(4);
     expect(splitter.connect.mock.calls).toEqual(context.mergers.flatMap((merger, index) => [
       [merger, index * 2, 0], [merger, index * 2 + 1, 1]
     ]));
-    context.mergers.forEach((merger, index) => {
+    context.mergers.slice(0, 3).forEach((merger, index) => {
       expect(merger.numberOfInputs).toBe(2);
       expect(merger.connect).toHaveBeenCalledExactlyOnceWith(context.gains[index + 1]);
       expect(context.gains[index + 1].channelCount).toBe(2);
       expect(context.gains[index + 1].channelCountMode).toBe("explicit");
     });
+    expect(context.mergers[3].connect).not.toHaveBeenCalled();
     expect(processing.effects).toHaveLength(0);
     expect(result.current.audioContext).toBeNull();
     await Promise.resolve();
@@ -188,15 +231,25 @@ describe("useAudioPitchShift", () => {
     expect(processing.effects[0].semitones()).toBe(3);
     expect(context.gains[2].gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, expect.closeTo(2.018, 8));
     const processor = processing.effects[0];
-    context.gains.slice(1).forEach((gain) => expect(gain.connect).toHaveBeenCalledWith(processor.node));
+    context.gains.slice(1, 4).forEach((gain) => expect(gain.connect).toHaveBeenCalledWith(processor.node));
     expect(processor.node.connect).toHaveBeenCalledExactlyOnceWith(context.gains[0]);
     expect(context.gains[0].connect).toHaveBeenCalledExactlyOnceWith(context.destination);
     expect(context.gains[0].gain.value).toBe(0);
+    const click = processing.clicks[0];
+    expect(click.context).toBe(context);
+    expect(click.latencySeconds).toBe(processor.latencySeconds);
+    expect(context.mergers[3].connect).toHaveBeenCalledExactlyOnceWith(click.node);
+    expect(click.node.connect).toHaveBeenCalledExactlyOnceWith(context.gains[4]);
+    expect(context.gains[4].connect).toHaveBeenCalledExactlyOnceWith(context.destination);
+    expect(context.gains[4].gain.value).toBe(0);
+    expect(click.setEnabled).toHaveBeenCalledExactlyOnceWith(false);
     expect(result.current.outputLatencySeconds).toBe(0.12);
     initial.playback.audioProcessingRef.current?.open();
     expect(context.gains[0].gain.setValueAtTime).toHaveBeenLastCalledWith(1, 2);
+    expect(context.gains[4].gain.setValueAtTime).toHaveBeenLastCalledWith(1, 2);
     initial.playback.audioProcessingRef.current?.silence();
     expect(context.gains[0].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    expect(context.gains[4].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
     expect(result.current.audioContext).toBe(context);
     expect(initial.playback.audioContextRef.current).toBe(context);
     await initial.playback.audioContextRef.current?.resume();
@@ -218,9 +271,94 @@ describe("useAudioPitchShift", () => {
     context.mergers.forEach((merger) => expect(merger.disconnect).toHaveBeenCalledOnce());
     context.gains.forEach((gain) => expect(gain.disconnect).toHaveBeenCalledOnce());
     expect(processing.effects[0].dispose).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].dispose).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].signal.aborted).toBe(true);
     expect(initial.playback.audioProcessingRef.current).toBeNull();
     expect(initial.playback.audioContextRef.current).toBeNull();
     expect(initial.playback.audioGraphReadyRef.current).toBeNull();
+  });
+
+  it("waits for both resets and keeps both destination gates closed until the transport opens them", async () => {
+    const initial = props();
+    const { result } = renderHook(() => useAudioPitchShift(initial));
+    await act(async () => { await initial.playback.audioGraphReadyRef.current; });
+    const context = ContextMock.instances[0];
+    const music = deferred();
+    const clicks = deferred();
+    processing.effects[0].prepare.mockReturnValueOnce(music.promise);
+    processing.clicks[0].prepare.mockReturnValueOnce(clicks.promise);
+    result.current.setClickEnabled(true);
+    const control = initial.playback.audioProcessingRef.current!;
+    control.open();
+    control.silence();
+    const preparing = control.prepare();
+    const prepared = vi.fn();
+    void preparing.then(prepared);
+    expect(processing.effects[0].prepare).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].prepare).toHaveBeenCalledOnce();
+    await act(async () => { clicks.resolve(); await Promise.resolve(); });
+    expect(prepared).not.toHaveBeenCalled();
+    await act(async () => { music.resolve(); await preparing; });
+    expect(prepared).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].setEnabled.mock.calls).toEqual([[false], [true]]);
+    for (const gate of [context.gains[0], context.gains[4]]) {
+      expect(gate.gain.setValueAtTime.mock.calls).toEqual([[1, 2], [0, 2]]);
+    }
+    control.open();
+    for (const gate of [context.gains[0], context.gains[4]]) {
+      expect(gate.gain.setValueAtTime).toHaveBeenLastCalledWith(1, 2);
+    }
+  });
+
+  it.each(["music", "click"] as const)("closes and disposes the complete graph when the %s reset fails", async (kind) => {
+    const initial = props();
+    const { result } = renderHook(() => useAudioPitchShift(initial));
+    await act(async () => { await initial.playback.audioGraphReadyRef.current; });
+    const processor = kind === "music" ? processing.effects[0] : processing.clicks[0];
+    const failure = new Error(`${kind} reset failed`);
+    processor.prepare.mockRejectedValueOnce(failure);
+    const control = initial.playback.audioProcessingRef.current!;
+    control.open();
+    await act(async () => { await expect(control.prepare()).rejects.toBe(failure); });
+    const context = ContextMock.instances[0];
+    for (const gate of [context.gains[0], context.gains[4]]) {
+      expect(gate.gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    }
+    expect(processing.effects[0].dispose).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].dispose).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].signal.aborted).toBe(true);
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(initial.playback.audioProcessingRef.current).toBeNull();
+    expect(result.current.pitchShiftErrorMessage).toContain(failure.message);
+    expect(() => control.open()).toThrow("Audio graph is unavailable");
+  });
+
+  it("applies the latest click preference after cue initialization and bypasses all three music gains", async () => {
+    const waiting = deferred();
+    processing.clickWait = waiting.promise;
+    const initial = props();
+    const { result, rerender } = renderHook(useAudioPitchShift, { initialProps: initial });
+    const ready = initial.playback.audioGraphReadyRef.current;
+    await act(async () => { await vi.dynamicImportSettled(); });
+    expect(processing.effects).toHaveLength(1);
+    expect(processing.clickCreationRequests).toBe(1);
+    expect(initial.playback.audioProcessingRef.current).toBeNull();
+    result.current.setClickEnabled(true);
+    result.current.setClickEnabled(false);
+    result.current.setClickEnabled(true);
+    await act(async () => { waiting.resolve(); await ready; });
+    const click = processing.clicks[0];
+    expect(click.setEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    const context = ContextMock.instances[0];
+    rerender({ ...initial, originalVolume: 0, stemVolume: 0, remainderVolume: 0, semitones: 6 });
+    expect(context.gains[2].gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, expect.closeTo(2.018, 8));
+    expect(context.gains[3].gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(0, expect.closeTo(2.018, 8));
+    expect(click.setEnabled).toHaveBeenCalledOnce();
+    expect(click.prepare).not.toHaveBeenCalled();
+    expect(context.mergers[3].connect).toHaveBeenCalledExactlyOnceWith(click.node);
+    expect(click.node.connect).toHaveBeenCalledExactlyOnceWith(context.gains[4]);
+    expect(context.gains[4].connect).toHaveBeenCalledExactlyOnceWith(context.destination);
+    expect(processing.effects[0].node.connect).toHaveBeenCalledExactlyOnceWith(context.gains[0]);
   });
 
   it("holds the current gain before each short ramp without rebuilding sources", async () => {
@@ -270,6 +408,7 @@ describe("useAudioPitchShift", () => {
     expect(context.gains[1].gain.value).toBe(0.75);
     expect(context.sources[0].connect).toHaveBeenCalledExactlyOnceWith(context.gains[1]);
     expect(context.gains[1].connect).toHaveBeenCalledExactlyOnceWith(processing.effects[0].node);
+    expect(processing.clickCreationRequests).toBe(0);
   });
 
   it("rebuilds only the graph when a replacement transport becomes multichannel", async () => {
@@ -288,7 +427,7 @@ describe("useAudioPitchShift", () => {
     const current = ContextMock.instances[1];
     expect(current.sources[0].element).toBe(replacement);
     expect(current.splitters).toHaveLength(1);
-    expect(current.gains).toHaveLength(4);
+    expect(current.gains).toHaveLength(5);
     expect(result.current.audioContext).toBe(current);
     expect(initial.playback.audioContextRef.current).toBe(current);
   });
@@ -336,19 +475,41 @@ describe("useAudioPitchShift", () => {
     expect(context.close).toHaveBeenCalledOnce();
   });
 
-  it("closes output and exposes processor failures during playback", async () => {
+  it("rejects readiness and disposes the ready music processor when cue initialization fails", async () => {
+    processing.clickFail = true;
+    const initial = props();
+    const { result } = renderHook(() => useAudioPitchShift(initial));
+    await act(async () => {
+      await expect(initial.playback.audioGraphReadyRef.current).rejects.toThrow("Click graph initialization failed");
+    });
+    const context = ContextMock.instances[0];
+    expect(context.close).toHaveBeenCalledOnce();
+    expect(processing.effects[0].dispose).toHaveBeenCalledOnce();
+    expect(context.gains[0].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    expect(context.gains[4].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    expect(initial.playback.audioContextRef.current).toBeNull();
+    expect(initial.playback.audioProcessingRef.current).toBeNull();
+    expect(result.current.pitchShiftErrorMessage).toContain("Click graph initialization failed");
+  });
+
+  it.each(["music", "click"] as const)("closes both outputs and exposes %s processor failures during playback", async (kind) => {
     const initial = props();
     const { result } = renderHook(() => useAudioPitchShift(initial));
     await act(async () => { await initial.playback.audioGraphReadyRef.current; });
     const pause = vi.spyOn(initial.playback.audioRef.current!, "pause");
     const control = initial.playback.audioProcessingRef.current!;
     control.open();
-    act(() => { processing.effects[0].onError(new Error("Processor failed")); });
+    act(() => {
+      const processor = kind === "music" ? processing.effects[0] : processing.clicks[0];
+      processor.onError(new Error("Processor failed"));
+    });
     expect(ContextMock.instances[0].gains[0].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    expect(ContextMock.instances[0].gains[4].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
     expect(pause).toHaveBeenCalledOnce();
     expect(result.current.pitchShiftErrorMessage).toContain("Processor failed");
     expect(initial.playback.audioProcessingRef.current).toBeNull();
     expect(processing.effects[0].dispose).toHaveBeenCalledOnce();
+    expect(processing.clicks[0].dispose).toHaveBeenCalledOnce();
     expect(() => control.open()).toThrow("Audio graph is unavailable");
   });
 
@@ -364,17 +525,24 @@ describe("useAudioPitchShift", () => {
     expect(initial.playback.audioContextRef.current).toBeNull();
   });
 
-  it.each(["import", "factory", "reconciliation"] as const)("bounds pending %s and ignores its late completion", async (stage) => {
+  it.each(["import", "factory", "click-import", "click-factory", "reconciliation"] as const)("bounds pending %s and ignores its late completion", async (stage) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const waiting = deferred();
+    const clickImportStarted = deferred();
     if (stage === "import") processing.importWait = waiting.promise;
     if (stage === "factory") processing.wait = waiting.promise;
+    if (stage === "click-import") {
+      processing.clickImportWait = waiting.promise;
+      processing.clickImportStarted = clickImportStarted.resolve;
+    }
+    if (stage === "click-factory") processing.clickWait = waiting.promise;
     if (stage === "reconciliation") processing.updateWait = waiting.promise;
     const initial = props();
     const pause = vi.spyOn(initial.playback.audioRef.current!, "pause");
     const { result } = renderHook(() => useAudioPitchShift(initial));
     const ready = initial.playback.audioGraphReadyRef.current;
-    if (stage !== "import") await act(async () => { await vi.dynamicImportSettled(); });
+    if (stage === "click-import") await act(async () => { await clickImportStarted.promise; });
+    if (stage !== "import" && stage !== "click-import") await act(async () => { await vi.dynamicImportSettled(); });
     const context = ContextMock.instances[0];
     await act(async () => { await vi.advanceTimersByTimeAsync(14_999); });
     expect(context.close).not.toHaveBeenCalled();
@@ -386,6 +554,7 @@ describe("useAudioPitchShift", () => {
     expect(pause).toHaveBeenCalledOnce();
     expect(context.close).toHaveBeenCalledOnce();
     expect(context.gains[0].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
+    expect(context.gains[4].gain.setValueAtTime).toHaveBeenLastCalledWith(0, 2);
     expect(result.current.pitchShiftErrorMessage).toContain("音声処理の準備が時間内に完了しませんでした");
     expect(initial.playback.audioContextRef.current).toBeNull();
     expect(initial.playback.audioProcessingRef.current).toBeNull();
@@ -396,6 +565,12 @@ describe("useAudioPitchShift", () => {
     if (stage === "import") expect(processing.creationRequests).toBe(0);
     else expect(processing.effects[0].dispose).toHaveBeenCalledOnce();
     if (stage === "factory") expect(processing.effects[0].node.connect).not.toHaveBeenCalled();
+    if (stage === "click-import") expect(processing.clickCreationRequests).toBe(0);
+    if (stage === "click-factory") {
+      expect(processing.clicks[0].dispose).toHaveBeenCalledOnce();
+      expect(processing.clicks[0].node.connect).not.toHaveBeenCalled();
+      expect(processing.clicks[0].signal.aborted).toBe(true);
+    }
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -468,5 +643,41 @@ describe("useAudioPitchShift", () => {
     expect(result.current.audioContext).toBe(current);
     expect(result.current.pitchShiftErrorMessage).toBeNull();
     expect(initial.playback.audioProcessingRef.current).not.toBeNull();
+  });
+
+  it("disposes a late cue processor without attaching it to the replacement transport", async () => {
+    const waiting = deferred();
+    processing.clickWait = waiting.promise;
+    const initial = props();
+    const { rerender, result } = renderHook(useAudioPitchShift, { initialProps: initial });
+    const oldReady = initial.playback.audioGraphReadyRef.current;
+    await act(async () => { await vi.dynamicImportSettled(); });
+    expect(processing.clickCreationRequests).toBe(1);
+    const oldContext = ContextMock.instances[0];
+    result.current.setClickEnabled(true);
+    processing.clickWait = Promise.resolve();
+    initial.playback.audioRef.current = document.createElement("audio");
+    rerender({ ...initial, mediaUrl: "/replacement.wav" });
+    const currentReady = initial.playback.audioGraphReadyRef.current;
+    await expect(oldReady).rejects.toMatchObject({ name: "AbortError" });
+    await act(async () => { await currentReady; });
+    const currentContext = ContextMock.instances[1];
+    const currentClick = processing.clicks.find((processor) => processor.context === currentContext)!;
+    expect(currentClick.setEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    await act(async () => { waiting.resolve(); });
+    const oldClick = processing.clicks.find((processor) => processor.context === oldContext)!;
+    expect(oldClick.dispose).toHaveBeenCalledOnce();
+    expect(oldClick.signal.aborted).toBe(true);
+    expect(oldClick.node.connect).not.toHaveBeenCalled();
+    expect(oldContext.mergers[3].connect).not.toHaveBeenCalled();
+    expect(oldClick.setEnabled).not.toHaveBeenCalled();
+    result.current.setClickEnabled(false);
+    expect(currentClick.setEnabled).toHaveBeenLastCalledWith(false);
+    act(() => { oldClick.onError(new Error("Late old click error")); });
+    expect(result.current.audioContext).toBe(currentContext);
+    expect(result.current.pitchShiftErrorMessage).toBeNull();
+    expect(initial.playback.audioProcessingRef.current).not.toBeNull();
+    expect(currentClick.dispose).not.toHaveBeenCalled();
+    expect(currentContext.close).not.toHaveBeenCalled();
   });
 });

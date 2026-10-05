@@ -20,7 +20,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    exclude: [...configDefaults.exclude, "dist-server/**", "e2e/**"],
+    exclude: [...configDefaults.exclude, "dist-server/**", "e2e/**", "audio-audit.local/**"],
     globals: true,
     setupFiles: "./vitest.setup.ts"
   }

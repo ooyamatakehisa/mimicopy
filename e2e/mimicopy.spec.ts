@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { getClickCueFrames, getClickCueRevisionInput } from "../server/clickCueFormat";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -33,7 +35,8 @@ test.beforeAll(async () => {
   ]);
   await generateMixerMedia({
     originalPath: mp3Path, stemPath: mp3Path,
-    remainderPath: mp3Path, outputPath: mixerPath
+    remainderPath: mp3Path, outputPath: mixerPath,
+    cues: getClickCueFrames(createCompletedBeatAnalysis().beatGrid)
   }, binary);
   [sourceMp3, mixerWav] = await Promise.all([readFile(mp3Path), readFile(mixerPath)]);
 });
@@ -96,6 +99,25 @@ function createCompletedBeatAnalysis() {
     status: "completed",
     updatedAt: now
   };
+}
+
+function fixtureCueRevision() {
+  return createHash("sha256").update(getClickCueRevisionInput(createCompletedBeatAnalysis().beatGrid)).digest("hex");
+}
+
+// Deterministic beat metadata and the PCM cues come from the same generated
+// fixture. The main workflow still uploads and decodes a real MP3 via the API.
+async function mockClickMixer(page: Page) {
+  await page.route("**/api/tracks/*/mixer", (route) => route.fulfill({
+    json: { mediaUrl: "/media/e2e-click-mixer.wav", cueRevision: fixtureCueRevision() }
+  }));
+  await page.route("**/media/e2e-click-mixer.wav", async (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), mixerWav.length - 1) : mixerWav.length - 1;
+    await route.fulfill({ body: mixerWav.subarray(start, end + 1), contentType: "audio/wav", status: range ? 206 : 200,
+      headers: { "accept-ranges": "bytes", ...(range ? { "content-range": `bytes ${start}-${end}/${mixerWav.length}` } : {}) } });
+  });
 }
 
 async function expectWaveformCanvas(page: Page) {
@@ -202,7 +224,7 @@ async function mockYoutubeConversion(page: Page, title = "Mock YouTube Track") {
   );
   await page.route("**/api/tracks/e2e-youtube-track/mixer", async (route) => {
     await route.fulfill({
-      json: { mediaUrl: "/media/e2e-youtube-mixer.wav" }
+      json: { mediaUrl: "/media/e2e-youtube-mixer.wav", cueRevision: fixtureCueRevision() }
     });
   });
   await page.route("**/media/e2e-youtube-mixer.wav", async (route) => {
@@ -286,11 +308,13 @@ async function mockYoutubeConversion(page: Page, title = "Mock YouTube Track") {
       });
     }
   );
+  return track;
 }
 
 test("loads audio and supports the main playback and marker workflow", async ({
   page
 }, testInfo) => {
+  await mockClickMixer(page);
   await page.route("**/api/tracks/*/beat-grid", async (route) => {
     await route.fulfill({
       body: JSON.stringify(createCompletedBeatAnalysis()),
@@ -484,6 +508,55 @@ test("loads audio and supports the main playback and marker workflow", async ({
   page.once("dialog", (dialog) => dialog.accept());
   await uploadedTrackRow.getByTitle("保存済みMP3を削除").click();
   await expect(library.getByTestId(`library-track-${trackId}`)).toHaveCount(0);
+});
+
+test("keeps original playback running when cue media finishes and switches after Stop", async ({ page }) => {
+  const track = await mockYoutubeConversion(page);
+  await page.route("**/api/tracks/e2e-youtube-track", (route) => route.fulfill({
+    json: { track: { ...track, separation: null } }
+  }));
+  let releaseMixer!: () => void;
+  const mixerReady = new Promise<void>((resolve) => { releaseMixer = resolve; });
+  await page.route("**/api/tracks/e2e-youtube-track/mixer", async (route) => {
+    await mixerReady;
+    await route.fulfill({ json: { mediaUrl: "/media/e2e-youtube-mixer.wav", cueRevision: fixtureCueRevision() } });
+  });
+  await page.goto("/tracks/e2e-youtube-track");
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  const original = await page.locator("audio").elementHandle();
+  if (!original) throw new Error("Missing original media element");
+  const clickToggle = page.getByTitle("クリック音をオン/オフ", { exact: true });
+  await expect(clickToggle).toBeDisabled();
+  await page.getByTitle("再生", { exact: true }).click();
+  await expect.poll(() => original.evaluate((audio: HTMLAudioElement) => audio.currentTime)).toBeGreaterThan(.4);
+  const before = await original.evaluate((audio: HTMLAudioElement) => audio.currentTime);
+  releaseMixer();
+  await expect(page.getByText("同期再生用の音源を準備できました。再生を停止すると切り替わります。")).toBeVisible();
+  await expect.poll(() => original.evaluate((audio: HTMLAudioElement, start) =>
+    audio.isConnected && !audio.paused && audio.currentTime > start + .3, before)).toBe(true);
+  await expect(clickToggle).toBeDisabled();
+  const nativeBeforeStop = await original.evaluate((audio: HTMLAudioElement) => audio.currentTime);
+  await page.getByTitle("停止", { exact: true }).click();
+  const stoppedPosition = Number(await page.getByRole("slider", { name: "再生位置" }).getAttribute("aria-valuenow"));
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentSrc))
+    .toContain("/media/e2e-youtube-mixer.wav");
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Playback preparation", { exact: true })).toHaveCount(0);
+  expect(await original.evaluate((audio: HTMLAudioElement) => audio.isConnected)).toBe(false);
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.paused)).toBe(true);
+  const restoredPosition = await page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime);
+  expect(Math.floor(restoredPosition)).toBe(stoppedPosition);
+  // The UI cursor is audible time, behind the native position by DSP latency.
+  // Exact cursor retention is unit-tested; here reject a reset to the start.
+  expect(restoredPosition).toBeGreaterThan(nativeBeforeStop - .25);
+  expect(restoredPosition).toBeLessThan(nativeBeforeStop + .5);
+  await expect(clickToggle).toBeEnabled();
+  await clickToggle.click();
+  await expect(clickToggle).toHaveAttribute("aria-pressed", "true");
+  await page.getByTitle("再生", { exact: true }).click();
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime))
+    .toBeGreaterThan(restoredPosition + .3);
+  await page.getByTitle("停止", { exact: true }).click();
 });
 
 test("converts a YouTube URL through the UI", async ({ page }) => {
@@ -913,9 +986,11 @@ test.describe("mobile track editor", () => {
     await expect(page.getByTitle("再生位置を追従")).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("selects slower and faster rates by touch and changes the actual media clock", async ({ page }) => {
+  test("selects slower and faster rates by touch and changes the actual media clock", async ({ page }, testInfo) => {
     await mockYoutubeConversion(page);
     await page.goto("/tracks/e2e-youtube-track");
+    await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentSrc))
+      .toContain("/media/e2e-youtube-mixer.wav");
     await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
     const speed = page.getByLabel("Playback speed");
     await speed.getByRole("button", { name: "0.25x", exact: true }).tap();
@@ -926,15 +1001,38 @@ test.describe("mobile track editor", () => {
       await expect(page.getByLabel("Playback preparation", { exact: true })).toHaveCount(0, { timeout: 16000 });
       await expect.poll(() => page.locator("audio").evaluate((element) => {
         const audio = element as HTMLAudioElement;
-        return audio.paused ? 0 : audio.playbackRate;
+        return audio.paused || audio.seeking || audio.readyState < 2 ? 0 : audio.playbackRate;
       })).toBe(rate);
-      const sample = () => page.locator("audio").evaluate((element) => ({
-        time: (element as HTMLAudioElement).currentTime, wall: performance.now()
-      }));
+      const sample = () => page.locator("audio").evaluate((element) => {
+        const audio = element as HTMLAudioElement;
+        return { time: audio.currentTime, wall: performance.now(), source: audio.currentSrc,
+          rate: audio.playbackRate, paused: audio.paused, seeking: audio.seeking, readyState: audio.readyState };
+      });
+      // Native play is emitted before buffered audio starts. Establish actual
+      // progress after the rate-change reload before measuring one slope window.
+      const startup = await sample();
+      await testInfo.attach(`media-startup-${rate}-${startup.wall}`, {
+        contentType: "application/json", body: JSON.stringify(startup)
+      });
+      await page.waitForFunction(({ startTime, rate }) => {
+        const audio = document.querySelector("audio");
+        return audio && !audio.paused && !audio.seeking && audio.readyState >= 2 &&
+          audio.playbackRate === rate && audio.currentTime >= startTime + .15 * rate;
+      }, { startTime: startup.time, rate }, { timeout: 16000 });
       const before = await sample();
-      await page.waitForTimeout(800);
-      const after = await sample();
-      expect(Math.abs((after.time - before.time) / ((after.wall - before.wall) / 1000) - rate)).toBeLessThan(0.08);
+      const samples = [before];
+      for (let index = 0; index < 8; index++) {
+        await page.waitForTimeout(100);
+        samples.push(await sample());
+      }
+      const after = samples[samples.length - 1];
+      const measuredRate = (after.time - before.time) / ((after.wall - before.wall) / 1000);
+      await testInfo.attach(`media-clock-${rate}-${before.wall}`, {
+        contentType: "application/json", body: JSON.stringify({ expectedRate: rate, measuredRate, startup, samples })
+      });
+      expect(samples.every((state) => !state.paused && !state.seeking && state.readyState >= 2 &&
+        state.rate === rate && state.source === before.source)).toBe(true);
+      expect(Math.abs(measuredRate - rate), JSON.stringify({ rate, measuredRate, before, after })).toBeLessThan(0.08);
     }
     await page.getByTitle("停止", { exact: true }).tap();
   });
@@ -960,10 +1058,10 @@ async function mockPlaybackQueue(page: Page) {
     return route.fulfill({ json: { track } });
   });
   await page.route("**/api/tracks/*/beat-grid", (route) => route.fulfill({ json: createCompletedBeatAnalysis() }));
-  await page.route("**/api/tracks/last/mixer", async (route) => {
+  await page.route("**/api/tracks/*/mixer", async (route) => {
     // Make original audio/graph arrive before the multichannel replacement.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await route.fulfill({ json: { mediaUrl: "/media/queue-mixer.wav" } });
+    if (route.request().url().endsWith("/last/mixer")) await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.fulfill({ json: { mediaUrl: "/media/queue-mixer.wav", cueRevision: fixtureCueRevision() } });
   });
   await page.route("**/media/queue-*", async (route) => {
     const isMixer = route.request().url().endsWith(".wav");
@@ -980,11 +1078,50 @@ async function mockPlaybackQueue(page: Page) {
 }
 
 async function playEnding(page: Page) {
+  // This scenario exercises a completed queue fixture. Original-only playback
+  // while its mixer is still being prepared is a different workflow.
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentSrc))
+    .toContain("/media/queue-mixer.wav");
   await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await page.getByTitle("マーカーへ移動", { exact: true }).click();
   await expect(page.getByLabel("Playback preparation")).toHaveCount(0);
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) =>
+    audio.paused && !audio.seeking && Math.abs(audio.currentTime - 19) < .01)).toBe(true);
   await page.getByTitle("再生", { exact: true }).click();
 }
+
+test("manual playback supersedes an automatic-next request while cue media is pending", async ({ page }) => {
+  await mockPlaybackQueue(page);
+  let releaseMixer!: () => void;
+  const mixerReady = new Promise<void>((resolve) => { releaseMixer = resolve; });
+  await page.route("**/api/tracks/last/mixer", async (route) => {
+    await mixerReady;
+    await route.fulfill({ json: { mediaUrl: "/media/queue-mixer.wav", cueRevision: fixtureCueRevision() } });
+  });
+  await page.goto("/?folder=practice");
+  await page.getByTitle("Queue first を開く", { exact: true }).click();
+  await page.getByRole("checkbox", { name: "次の曲を自動再生", exact: true }).check();
+  await playEnding(page);
+  await expect(page).toHaveURL(/\/tracks\/last$/);
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  await page.getByTitle("再生", { exact: true }).click();
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime)).toBeGreaterThan(.4);
+  releaseMixer();
+  await expect(page.getByText("同期再生用の音源を準備できました。再生を停止すると切り替わります。")).toBeVisible();
+  await page.keyboard.press("KeyK");
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentSrc))
+    .toContain("/media/queue-mixer.wav");
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Playback preparation", { exact: true })).toHaveCount(0);
+  const stopped = await page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime);
+  await page.waitForTimeout(400);
+  const state = await page.locator("audio").evaluate((audio: HTMLAudioElement) => ({ paused: audio.paused, time: audio.currentTime }));
+  expect(state.paused).toBe(true);
+  expect(Math.abs(state.time - stopped)).toBeLessThan(.02);
+  await page.keyboard.press("Space");
+  await expect.poll(() => page.locator("audio").evaluate((audio: HTMLAudioElement) => audio.currentTime)).toBeGreaterThan(stopped + .3);
+  await page.getByTitle("停止", { exact: true }).click();
+});
 
 for (const scope of ["all", "folder", "search"] as const) {
   test(`auto-advances in the entered ${scope} list and preserves local preference`, async ({ page }, testInfo) => {
