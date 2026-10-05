@@ -9,13 +9,10 @@ export function upsertTrackSummary(
   track: TrackDetail
 ) {
   const summary = toTrackSummary(track);
-  const remainingTracks = (tracks ?? []).filter(
-    (currentTrack) => currentTrack.id !== summary.id
-  );
-
-  return [summary, ...remainingTracks].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt)
-  );
+  const existing = tracks ?? [];
+  return existing.some((current) => current.id === summary.id)
+    ? existing.map((current) => current.id === summary.id ? summary : current)
+    : [summary, ...existing];
 }
 
 export function removeTrackSummary(

@@ -1,3 +1,4 @@
+import { migrateTrackOrder, reorderTrackScope } from "./trackOrder.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -329,6 +330,8 @@ function createSchema(database: DatabaseSync) {
   }
   database.exec("CREATE INDEX IF NOT EXISTS tracks_folder_index ON tracks(folder_id)");
 
+  migrateTrackOrder(database);
+
   const separationColumns = database
     .prepare("PRAGMA table_info(track_separations)")
     .all();
@@ -441,6 +444,10 @@ export class LibraryStore {
     }
   }
 
+  reorderTracks(scope: string, previousTrackIds: string[], trackIds: string[]) {
+    reorderTrackScope(this.#database, scope, previousTrackIds, trackIds);
+  }
+
   listTracks() {
     const rows = this.#database
       .prepare(
@@ -458,7 +465,7 @@ export class LibraryStore {
           FROM tracks
           LEFT JOIN markers ON markers.track_id = tracks.id
           GROUP BY tracks.id
-          ORDER BY tracks.updated_at DESC
+          ORDER BY tracks.sort_position, tracks.id
         `
       )
       .all();
@@ -792,9 +799,10 @@ export class LibraryStore {
             media_filename,
             duration,
             created_at,
-            updated_at
+            updated_at,
+            sort_position
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MIN(sort_position), 1) - 1 FROM tracks))
         `
       )
       .run(

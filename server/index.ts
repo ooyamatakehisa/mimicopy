@@ -1,3 +1,4 @@
+import { createTrackOrderRouter } from "./trackOrderRoutes.js";
 import { createFolderRouter } from "./folderRoutes.js";
 import express, { type Request, type Response } from "express";
 import { Innertube, type Types } from "youtubei.js";
@@ -636,6 +637,7 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.use(express.json({ limit: "1mb" }));
   app.use("/api", createFolderRouter(store));
+  app.use("/api", createTrackOrderRouter(store));
   app.use("/media", express.static(paths.mediaDir, { maxAge: "1h" }));
 
   app.get("/api/health", (_request, response) => {
