@@ -1,3 +1,4 @@
+import type { PlaybackQueue } from "../../lib/playbackQueue";
 import { useDragDropMonitor } from "@dnd-kit/react";
 import { getTrackMove } from "../../lib/libraryDrag";
 import { useEffect, useRef, useState } from "react";
@@ -22,7 +23,7 @@ import { MoveTracksForm } from "./MoveTracksForm";
 
 type LibraryPanelProps = {
   activeTrackId: string | null;
-  navigateToTrack: (trackId: string) => void;
+  navigateToTrack: (trackId: string, queue?: PlaybackQueue) => void;
   scope: LibraryScope;
   onNavigate: (scope: LibraryScope) => void;
   library: LibraryState;
@@ -344,7 +345,10 @@ export function LibraryPanel({
                       )
                     }
                     onMove={() => beginMove([track.id])}
-                    navigateToTrack={navigateToTrack}
+                    navigateToTrack={(trackId) => navigateToTrack(trackId, {
+                      trackIds: visibleTracks.map((item) => item.id),
+                      label: search.trim() ? `${title}（検索結果）` : title
+                    })}
                     onDelete={() =>
                       void library.deleteTrackFromLibrary(track.id)
                     }

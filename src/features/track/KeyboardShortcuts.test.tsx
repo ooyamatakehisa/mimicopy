@@ -4,9 +4,12 @@ import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import type { MarkersState } from "./useMarkersState";
 import type { PlaybackState } from "./usePlaybackState";
 
+afterEach(cleanup);
+
 function setup() {
   const togglePlayback = vi.fn();
   const onControlKeyDown = vi.fn();
+  const onControlClick = vi.fn();
   const playback = {
     currentTime: 1,
     duration: 10,
@@ -23,36 +26,35 @@ function setup() {
   render(
     <>
       <KeyboardShortcuts playback={playback} markers={markers} />
-      <button type="button" onKeyDown={onControlKeyDown}>Mute guitar</button>
+      <button type="button" onKeyDown={onControlKeyDown} onClick={onControlClick}>Mute guitar</button>
       <a href="#download" onKeyDown={onControlKeyDown}>Download</a>
+      <input type="checkbox" aria-label="Auto next" onClick={onControlClick} />
       <input aria-label="Marker label" onKeyDown={onControlKeyDown} />
     </>
   );
-  return { togglePlayback, onControlKeyDown };
+  return { togglePlayback, onControlKeyDown, onControlClick, playback, markers };
 }
 
 describe("KeyboardShortcuts", () => {
-  afterEach(cleanup);
 
-  it.each(["Enter", " "])("preserves native %j activation on a focused button", (key) => {
+
+  it.each(["Enter", " "])("prioritizes %j playback over focused button activation", (key) => {
     const { togglePlayback, onControlKeyDown } = setup();
     const button = screen.getByRole("button", { name: "Mute guitar" });
     button.focus();
 
-    // JSDOM does not perform the browser's default keyboard click. Verify that
-    // its prerequisite event remains uncancelled and reaches the control.
-    expect(fireEvent.keyDown(button, { key })).toBe(true);
-    expect(onControlKeyDown).toHaveBeenCalledOnce();
-    expect(togglePlayback).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(button, { key })).toBe(false);
+    expect(onControlKeyDown).not.toHaveBeenCalled();
+    expect(togglePlayback).toHaveBeenCalledOnce();
   });
 
-  it("preserves Enter activation of a download link", () => {
+  it("prioritizes Enter playback over a focused download link", () => {
     const { togglePlayback, onControlKeyDown } = setup();
     const link = screen.getByRole("link", { name: "Download" });
     link.focus();
-    expect(fireEvent.keyDown(link, { key: "Enter" })).toBe(true);
-    expect(onControlKeyDown).toHaveBeenCalledOnce();
-    expect(togglePlayback).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(link, { key: "Enter" })).toBe(false);
+    expect(onControlKeyDown).not.toHaveBeenCalled();
+    expect(togglePlayback).toHaveBeenCalledOnce();
   });
 
   it.each(["Enter", " ", "k"])("keeps %j playback shortcuts on the page", (key) => {
@@ -78,4 +80,43 @@ describe("KeyboardShortcuts", () => {
     expect(onControlKeyDown).toHaveBeenCalledOnce();
     expect(togglePlayback).not.toHaveBeenCalled();
   });
+});
+
+it("handles seek, rate and marker shortcuts with a focused button", () => {
+  const { playback, markers, onControlKeyDown } = setup();
+  const button = screen.getByRole("button", { name: "Mute guitar" });
+  for (const [key, delta] of [["ArrowLeft", -5], ["ArrowRight", 5], ["j", -10], ["l", 10]] as const) {
+    fireEvent.keyDown(button, { key });
+    expect(playback.seekBySeconds).toHaveBeenLastCalledWith(delta);
+  }
+  fireEvent.keyDown(button, { key: ">", shiftKey: true });
+  expect(playback.changePlaybackRate).toHaveBeenCalledWith("faster");
+  fireEvent.keyDown(button, { key: "m" });
+  expect(markers.addMarkerAt).toHaveBeenCalledWith(1, 10);
+  expect(onControlKeyDown).not.toHaveBeenCalled();
+});
+
+it("cancels repeated playback keys without repeatedly toggling", () => {
+  const { togglePlayback } = setup();
+  const button = screen.getByRole("button", { name: "Mute guitar" });
+  expect(fireEvent.keyDown(button, { key: " ", repeat: true })).toBe(false);
+  expect(togglePlayback).not.toHaveBeenCalled();
+});
+
+it("activates focused controls with Alt+Enter without toggling playback", () => {
+  const { togglePlayback, onControlClick } = setup();
+  const button = screen.getByRole("button", { name: "Mute guitar" });
+  fireEvent.keyDown(button, { key: "Enter", altKey: true });
+  expect(onControlClick).toHaveBeenCalledOnce();
+  expect(togglePlayback).not.toHaveBeenCalled();
+});
+
+it("prioritizes Space on a checkbox and keeps Alt+Enter available for changing it", () => {
+  const { togglePlayback, onControlClick } = setup();
+  const checkbox = screen.getByRole("checkbox", { name: "Auto next" });
+  expect(fireEvent.keyDown(checkbox, { key: " " })).toBe(false);
+  expect(togglePlayback).toHaveBeenCalledOnce();
+  expect(onControlClick).not.toHaveBeenCalled();
+  fireEvent.keyDown(checkbox, { key: "Enter", altKey: true });
+  expect(checkbox).toBeChecked();
 });

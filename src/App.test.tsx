@@ -380,7 +380,7 @@ describe("App", () => {
     }
   });
 
-  it("preserves native button activation while K still toggles playback", async () => {
+  it("prioritizes playback shortcuts over focused speed buttons", async () => {
     const playSpy = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockImplementation(() => Promise.resolve());
@@ -413,14 +413,9 @@ describe("App", () => {
         duration: { configurable: true, value: 10 }
       });
       speedDownButton.focus();
-      expect(fireEvent.keyDown(speedDownButton, { key: " " })).toBe(true);
-      expect(fireEvent.keyDown(speedDownButton, { key: "Enter" })).toBe(true);
-      expect(playSpy).not.toHaveBeenCalled();
-      fireEvent.click(speedDownButton);
-      expect(within(screen.getByLabelText("Playback speed")).getByText("0.75x", { selector: "strong" })).toBeVisible();
-      expect(playSpy).not.toHaveBeenCalled();
-      fireEvent.keyDown(speedDownButton, { key: "k" });
+      expect(fireEvent.keyDown(speedDownButton, { key: " " })).toBe(false);
       await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+      expect(within(screen.getByLabelText("Playback speed")).getByText("1x", { selector: "strong" })).toBeVisible();
 
       Object.defineProperty(audio as HTMLAudioElement, "paused", {
         configurable: true,
@@ -428,7 +423,7 @@ describe("App", () => {
       });
 
       const pausesBeforeStop = pauseSpy.mock.calls.length;
-      fireEvent.keyDown(speedDownButton, { key: "k" });
+      expect(fireEvent.keyDown(speedDownButton, { key: "Enter" })).toBe(false);
       expect(pauseSpy).toHaveBeenCalledTimes(pausesBeforeStop + 1);
     } finally {
       playSpy.mockRestore();

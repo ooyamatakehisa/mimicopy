@@ -1,13 +1,15 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { PlaybackState } from "./usePlaybackState";
 
 /** Key this component by media URL so a replacement gets its own source node. */
-export function PlaybackAudio({ mediaUrl, playback }: {
+export function PlaybackAudio({ mediaUrl, playback, autoPlay = false, onAutoPlayConsumed }: {
   mediaUrl: string;
   playback: PlaybackState;
+  autoPlay?: boolean;
+  onAutoPlayConsumed?: () => void;
 }) {
   const { audioRef, bindAudio, isPlaying, markPaused, markEnded, markPlaying, playbackRate,
-    reportMediaError, restoreMetadata, restoreSeeked, syncMediaDuration, syncMediaTime, syncPlaybackRate } = playback;
+    togglePlayback, reportMediaError, restoreMetadata, restoreSeeked, syncMediaDuration, syncMediaTime, syncPlaybackRate } = playback;
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -33,6 +35,15 @@ export function PlaybackAudio({ mediaUrl, playback }: {
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
   }, [audioRef, isPlaying, syncMediaTime]);
+
+  const autoPlayStarted = useRef(false);
+  useEffect(() => {
+    if (!autoPlay || autoPlayStarted.current ||
+        playback.audioProcessingRef.current?.element !== audioRef.current) return;
+    autoPlayStarted.current = true;
+    onAutoPlayConsumed?.();
+    togglePlayback();
+  }, [autoPlay, audioRef, onAutoPlayConsumed, playback.audioProcessingRef, togglePlayback]);
 
   return (
     <audio

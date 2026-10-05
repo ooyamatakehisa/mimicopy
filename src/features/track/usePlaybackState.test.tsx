@@ -63,7 +63,8 @@ function processing(element: HTMLMediaElement) {
 const disposeBindings: (() => void)[] = [];
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const hook = renderHook(() => usePlaybackState({ initialDuration: 30, trackDuration: 30, trackId: "test" }), {
+  const onPlaybackEnded = vi.fn();
+  const hook = renderHook(() => usePlaybackState({ initialDuration: 30, trackDuration: 30, trackId: "test", onPlaybackEnded }), {
     wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
   });
   const original = media();
@@ -81,7 +82,7 @@ function setup() {
     original.seeked();
     hook.result.current.restoreSeeked(original.element);
   });
-  return { ...hook, original, resume, metadata, seeked, disposeBinding };
+  return { ...hook, original, resume, metadata, seeked, disposeBinding, onPlaybackEnded };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -532,8 +533,8 @@ describe("playback restoration", () => {
     expect(result.current.currentTime).toBeCloseTo(7.94);
   });
 
-  it("keeps play intent and the audible cursor advancing until the natural-end tail drains", () => {
-    const { result, original } = setup();
+  it("notifies completion once, only after the audible tail drains", () => {
+    const { result, original, onPlaybackEnded } = setup();
     const control = processing(original.element);
     control.latencySeconds = 0.12;
     result.current.audioProcessingRef.current = control;
@@ -544,18 +545,21 @@ describe("playback restoration", () => {
     act(() => { result.current.markPaused(); result.current.markEnded(); });
     expect(result.current.isPlaying).toBe(true);
     expect(result.current.currentTime).toBeCloseTo(29.88);
+    expect(onPlaybackEnded).not.toHaveBeenCalled();
     act(() => { vi.advanceTimersByTime(60); result.current.syncMediaTime(30); });
     expect(result.current.currentTime).toBeCloseTo(29.94);
     expect(result.current.isPlaying).toBe(true);
     act(() => { vi.advanceTimersByTime(61); });
     expect(result.current.isPlaying).toBe(false);
     expect(result.current.currentTime).toBe(30);
+    act(() => result.current.markEnded());
+    expect(onPlaybackEnded).toHaveBeenCalledOnce();
     expect(control.silence).not.toHaveBeenCalled();
     expect(control.prepare).not.toHaveBeenCalled();
   });
 
-  it("stops and preserves the heard position during natural-end draining", () => {
-    const { result, original } = setup();
+  it("cancels completion when stopped during natural-end draining", () => {
+    const { result, original, onPlaybackEnded } = setup();
     const control = processing(original.element);
     control.latencySeconds = 0.12;
     result.current.audioProcessingRef.current = control;
@@ -571,5 +575,6 @@ describe("playback restoration", () => {
     act(() => { vi.advanceTimersByTime(100); });
     expect(result.current.currentTime).toBeCloseTo(29.94);
     expect(result.current.isPlaying).toBe(false);
+    expect(onPlaybackEnded).not.toHaveBeenCalled();
   });
 });

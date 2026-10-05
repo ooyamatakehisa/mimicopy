@@ -45,12 +45,16 @@ function applyNativePlaybackRate(audio: HTMLMediaElement, rate: PlaybackRate) {
 export function usePlaybackState({
   initialDuration,
   trackDuration,
-  trackId
+  trackId,
+  onPlaybackEnded
 }: {
   initialDuration: number;
   trackDuration: number;
   trackId: string;
+  onPlaybackEnded?: () => void;
 }) {
+  const onPlaybackEndedRef = useRef(onPlaybackEnded);
+  useEffect(() => { onPlaybackEndedRef.current = onPlaybackEnded; }, [onPlaybackEnded]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioGraphReadyRef = useRef<Promise<void> | null>(null);
@@ -430,7 +434,7 @@ export function usePlaybackState({
 
   const markEnded = useCallback(() => {
     const audio = audioRef.current;
-    if (pendingRestoreRef.current || !audio?.ended || pendingDrainRef.current?.audio === audio) return;
+    if (pendingRestoreRef.current || !playRequestedRef.current || !audio?.ended || pendingDrainRef.current?.audio === audio) return;
     const generation = ++playGenerationRef.current;
     needsReloadRef.current = true;
     primedCursorRef.current = null;
@@ -458,6 +462,7 @@ export function usePlaybackState({
       playRequestedRef.current = false;
       publishTime(audio.duration);
       setIsPlaying(false);
+      onPlaybackEndedRef.current?.();
     };
     // Keep click scheduling, the output gate, and the context alive for the
     // remaining processed tail. An explicit action cancels this generation.

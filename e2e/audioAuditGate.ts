@@ -156,9 +156,9 @@ export function evaluateAuditKeyboard(entries: unknown, engine: string) {
     const key = `${entry.label}/${entry.action}/${entry.key}`;
     actual.add(key);
     if (typeof entry.toggled !== "boolean") record(inconclusive, key, "keyboard-activation-unmeasured");
-    else if (!entry.toggled) record(failures, key, "keyboard-button-not-activated");
-    if (typeof entry.unexpectedPlaybackChange !== "boolean" || typeof entry.playingBefore !== "boolean" || typeof entry.playing !== "boolean") record(inconclusive, key, "keyboard-transport-change-unmeasured");
-    else if (entry.unexpectedPlaybackChange || entry.playingBefore !== entry.playing) record(failures, key, "keyboard-button-changed-playback");
+    else if (entry.toggled) record(failures, key, "keyboard-shortcut-activated-button");
+    if (entry.policy !== "playback-priority" || typeof entry.playingBefore !== "boolean" || typeof entry.playing !== "boolean") record(inconclusive, key, "keyboard-transport-change-unmeasured");
+    else if (entry.playingBefore === entry.playing) record(failures, key, "keyboard-shortcut-did-not-toggle-playback");
   }
   const expected = ["原音", "ギター", "ギター以外"].flatMap((label) => ["ミュート", "ソロ"].flatMap((action) => ["Enter", "Space"].map((key) => `${label}/${action}/${key}`)));
   if (entries.length !== 12 || actual.size !== 12 || expected.some((key) => !actual.has(key))) record(inconclusive, "report", "keyboard-coverage-incomplete");

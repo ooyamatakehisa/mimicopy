@@ -236,9 +236,19 @@ visible and cancellable; these operations can include a short silence. Mixer
 buttons change only gains. The processor is bundled locally, with bounded
 initialization/command waits and a visible error on failure.
 
-`K` toggles playback even when a mixer or speed button has focus. Space and
-Enter activate the focused button; with focus on the page, they toggle playback.
-Text inputs keep their normal typing behavior.
+Space, Enter and `K` toggle playback even when a mixer, speed button or link
+has focus. Seek, rate and marker shortcuts also take priority over buttons.
+Text fields retain normal typing; Shift+arrow waveform panning is unchanged.
+Use Alt+Enter to activate a focused button directly (for example, delete a marker).
+
+Enable **次の曲を自動再生** in the playback controls to open and play the next
+track automatically after the current audio finishes. This preference defaults
+to off and is saved in localStorage. The order is captured from the list used
+to open the track (all tracks, a folder, unfiled tracks, or search results), so
+later list edits cannot reorder the queue. Playback stops at the last track.
+Reloading or returning through browser history does not automatically replay a
+track. Direct track links have no queue; open a track from the library to start
+a sequence.
 
 `GET /api/tracks/:id/mixer` prepares and caches this derived media under
 `storage/media/mixers`. Original files remain the waveform/download sources.

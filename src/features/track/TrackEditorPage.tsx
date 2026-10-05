@@ -17,6 +17,8 @@ import {
 } from "../../lib/api";
 import type { DecodedAudio } from "../../lib/audio";
 import type { TrackDetail } from "../../lib/library";
+import { useAutoNextTrack } from "./useAutoNextTrack";
+import type { PlaybackSequence } from "./usePlaybackSequence";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { MarkerPanel } from "./MarkerPanel";
 import { PlaybackAudio } from "./PlaybackAudio";
@@ -36,6 +38,7 @@ import { WaveformPanel } from "./WaveformPanel";
 type TrackEditorPageProps = {
   navigateToLibrary: () => void;
   trackId: string;
+  sequence?: PlaybackSequence;
 };
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -53,7 +56,8 @@ async function decodeTrackMedia(mediaUrl: string) {
 
 export function TrackEditorPage({
   navigateToLibrary,
-  trackId
+  trackId,
+  sequence
 }: TrackEditorPageProps) {
   const trackQuery = useQuery({
     queryFn: () => fetchTrack(trackId),
@@ -128,6 +132,7 @@ export function TrackEditorPage({
   return (
     <TrackEditor
       key={track.id}
+      sequence={sequence}
       mixerMediaUrl={hasSeparatedMedia ? mixerQuery.data ?? null : null}
       mixerPreparationMessage={hasSeparatedMedia && !mixerQuery.data
         ? mixerQuery.isError
@@ -179,7 +184,8 @@ function TrackEditor({
   mixerPreparationMessage,
   mixerPreparationFailed,
   navigateToLibrary,
-  track
+  track,
+  sequence
 }: {
   decoded: DecodedAudio;
   mixerMediaUrl: string | null;
@@ -187,6 +193,7 @@ function TrackEditor({
   mixerPreparationFailed: boolean;
   navigateToLibrary: () => void;
   track: TrackDetail;
+  sequence?: PlaybackSequence;
 }) {
   const queryClient = useQueryClient();
   const beatGridQuery = useQuery({
@@ -206,10 +213,12 @@ function TrackEditor({
   });
   const beatAnalysis = beatGridQuery.data ?? null;
   const beatGrid = beatGridQuery.data?.beatGrid ?? null;
+  const autoNext = useAutoNextTrack(sequence);
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
     trackDuration: track.duration,
-    trackId: track.id
+    trackId: track.id,
+    onPlaybackEnded: autoNext.onPlaybackEnded
   });
   const mixer = useStemMixer();
   const transpose = useTranspose();
@@ -257,6 +266,10 @@ function TrackEditor({
   const description = markers.isSavingMarkers ? "マーカー保存中" : errorMessage ??
     (!pitchShift.audioContext ? "音声処理を準備しています。" : null);
 
+  const hasPendingMixer = track.separation?.status === "completed" &&
+    Boolean(track.separation.mediaUrl && track.separation.remainderMediaUrl) &&
+    !mixerMediaUrl && !mixerPreparationFailed;
+
   const retryBeatAnalysis = () => {
     clickTrack.resetScheduledBeats();
     beatGridMutation.mutate();
@@ -264,7 +277,9 @@ function TrackEditor({
 
   return (
     <>
-      <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback} />
+      <PlaybackAudio key={playbackMediaUrl} mediaUrl={playbackMediaUrl} playback={playback}
+        autoPlay={sequence?.autoPlayRequested === true && Boolean(pitchShift.audioContext) && !hasPendingMixer}
+        onAutoPlayConsumed={sequence?.consumeAutoPlay} />
       <KeyboardShortcuts markers={markers} playback={playback} />
       <Surface
         className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden rounded-2xl max-lg:contents"
@@ -320,6 +335,7 @@ function TrackEditor({
       </Surface>
 
       <TransportControls
+        autoNext={autoNext}
         beatGrid={beatGrid}
         beatAnalysis={beatAnalysis}
         beatGridErrorMessage={beatGridErrorMessage}

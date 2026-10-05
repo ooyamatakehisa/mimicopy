@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { chromium, webkit } from "@playwright/test";
+import { chromium, webkit, expect } from "@playwright/test";
 
 // Intentionally separate from the fast default E2E suite: a full run takes
 // several minutes and records failures without aborting the remaining cases.
@@ -53,13 +53,22 @@ try {
     for (const action of ["ミュート", "ソロ"]) {
       for (const key of ["Enter", "Space"]) {
         const target = page.getByTitle(`${label}を${action}`, { exact: true });
+        const play = page.getByTitle("再生", { exact: true });
+        const pauseBefore = page.getByTitle("停止", { exact: true });
+        if (await pauseBefore.count()) await pauseBefore.click();
+        await expect(play).toBeEnabled();
+        await expect(page.getByLabel("Playback preparation")).toHaveCount(0, { timeout: 16000 });
         const before = await target.getAttribute("aria-pressed");
         const playingBefore = await page.locator("audio").first().evaluate((audio: HTMLAudioElement) => !audio.paused);
-        await target.focus(); await page.keyboard.press(key); await page.waitForTimeout(180);
+        await target.focus(); await page.keyboard.press(key);
+        await page.waitForFunction(() => {
+          const audio = document.querySelector("audio");
+          return audio && !audio.paused && audio.currentTime > 0;
+        }, undefined, { timeout: 16000 });
         const after = await target.getAttribute("aria-pressed");
         const playingAfter = await page.locator("audio").first().evaluate((audio: HTMLAudioElement) => !audio.paused);
-        keyboardResults.push({ label, action, key, before, after, toggled: before !== after,
-          playingBefore, playing: playingAfter, unexpectedPlaybackChange: playingBefore !== playingAfter });
+        keyboardResults.push({ policy: "playback-priority", label, action, key, before, after, toggled: before !== after,
+          playingBefore, playing: playingAfter });
         const pause = page.getByTitle("停止", { exact: true });
         if (await pause.count()) await pause.click();
       }
