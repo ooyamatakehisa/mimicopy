@@ -1,3 +1,4 @@
+import { readTrackOrderDragData } from "../../lib/trackOrder";
 import type { ReactNode } from "react";
 import {
   DragDropProvider,
@@ -41,22 +42,30 @@ const accessibilityOptions: NonNullable<
 > = {
   screenReaderInstructions: {
     draggable:
-      "SpaceまたはEnterを押すとドラッグを開始します。矢印キーで移動、Shiftと矢印キーで大きく移動、もう一度Spaceでドロップ、Escapeでキャンセルできます。移動ボタンからフォルダを選ぶこともできます。"
+      "SpaceまたはEnterを押すとドラッグを開始します。矢印キーで移動、Shiftと矢印キーで大きく移動、もう一度Spaceでドロップ、Escapeでキャンセルできます。並べ替え中は上下ボタンでも曲順を変更できます。移動ボタンからフォルダを選ぶこともできます。"
   },
   announcements: {
     dragstart: ({ operation }) => {
+      const order = readTrackOrderDragData(operation.source?.data);
+      if (order) return `${order.title} の並べ替えを開始しました。`;
       const source = readTrackDragData(operation.source?.data);
       return source
         ? `${source.trackIds.length} 曲のドラッグを開始しました。`
         : undefined;
     },
     dragover: ({ operation }) => {
+      const order = readTrackOrderDragData(operation.target?.data);
+      if (order) return `${order.title} の位置に移動します。`;
       const target = readFolderDropData(operation.target?.data);
       return target
         ? `移動先：${target.name}`
         : "移動先のフォルダに重ねてください。";
     },
     dragend: ({ operation, canceled }) => {
+      if (readTrackOrderDragData(operation.source?.data)) {
+        return canceled || !readTrackOrderDragData(operation.target?.data)
+          ? "並べ替えをキャンセルしました。" : "曲順を変更しました。曲順を保存ボタンで確定してください。";
+      }
       const target = readFolderDropData(operation.target?.data);
       return canceled || !target
         ? "移動をキャンセルしました。"
@@ -108,6 +117,12 @@ export function LibraryDragDrop({ children }: { children: ReactNode }) {
       {children}
       <DragOverlay dropAnimation={null}>
         {(source) => {
+          const order = readTrackOrderDragData(source.data);
+          if (order) return (
+            <div className="max-w-72 truncate rounded-lg bg-teal px-4 py-3 text-sm font-medium text-surface shadow-tight">
+              {order.title}
+            </div>
+          );
           const data = readTrackDragData(source.data);
           return data && <TrackDragPreview data={data} />;
         }}

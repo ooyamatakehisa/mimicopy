@@ -95,6 +95,20 @@ above the list. Folder names can be saved with Enter or cancelled with Escape.
 Existing SQLite libraries are migrated automatically without changing media
 files. Folder memberships and names are stored in the same database.
 
+### Track order
+
+Choose **並べ替え** in a folder, **未分類**, or **すべての曲**. Drag a track
+by its handle or use its up/down buttons, then choose **曲順を保存**. The buttons
+also work with Tab and Enter/Space on keyboards and on small touch screens.
+**キャンセル** discards the draft. Clear search before editing the full list.
+
+The saved order is shared across library views; reordering one folder preserves
+the relative order of tracks outside that folder. Renaming tracks or editing
+markers no longer changes their order. New imports appear at the top. Existing
+libraries retain their current order when the ordering column is first added.
+If another tab changes the list or its order while editing, saving reports a
+conflict; return to the list and start again with the latest tracks.
+
 ## Stem Separation
 
 When importing a YouTube URL, choose either `音源分離なし` or one target:

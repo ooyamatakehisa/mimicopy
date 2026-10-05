@@ -2,6 +2,7 @@ import { useDragDropMonitor } from "@dnd-kit/react";
 import { getTrackMove } from "../../lib/libraryDrag";
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowDownUp,
   FolderInput,
   FolderOpen,
   Music2,
@@ -16,6 +17,7 @@ import type { LibraryState } from "./useLibraryState";
 import type { FoldersState } from "./useFolders";
 import { FolderActions } from "./FolderActions";
 import { LibraryTrackRow } from "./LibraryTrackRow";
+import { TrackOrderEditor } from "./TrackOrderEditor";
 import { MoveTracksForm } from "./MoveTracksForm";
 
 type LibraryPanelProps = {
@@ -35,6 +37,9 @@ export function LibraryPanel({
   library,
   folders
 }: LibraryPanelProps) {
+  const [isOrdering, setIsOrdering] = useState(false);
+  const orderTrigger = useRef<HTMLButtonElement>(null);
+  const wasOrdering = useRef(false);
   const [search, setSearch] = useState("");
   const [selection, setSelection] = useState<string[]>([]);
   const [movingIds, setMovingIds] = useState<string[] | null>(null);
@@ -74,6 +79,14 @@ export function LibraryPanel({
   const allSelected =
     visibleTracks.length > 0 && selectedIds.length === visibleTracks.length;
   const isLoading = library.isLibraryLoading || folders.foldersQuery.isFetching;
+  useEffect(() => {
+    if (isOrdering) wasOrdering.current = true;
+    else if (wasOrdering.current && !isLoading) {
+      if (orderTrigger.current?.disabled) headingRef.current?.focus();
+      else orderTrigger.current?.focus();
+      wasOrdering.current = false;
+    }
+  }, [isOrdering, isLoading]);
   const beginMove = (ids: string[]) => {
     moveTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -115,7 +128,7 @@ export function LibraryPanel({
       aria-busy={isLoading}
     >
       <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5 pt-7 sm:px-7">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 max-sm:basis-full">
           <h2
             ref={headingRef}
             tabIndex={-1}
@@ -128,9 +141,20 @@ export function LibraryPanel({
             {scope === "unfiled" && " · まだフォルダに入っていない曲"}
           </p>
         </div>
+        <Button
+          ref={orderTrigger}
+          size="sm"
+          className="max-sm:h-11"
+          disabled={isOrdering || scopedTracks.length < 2 || isLoading || Boolean(movingIds) || folders.moveMutation.isPending || Boolean(search.trim())}
+          title={search.trim() ? "検索を解除すると並べ替えできます" : "曲順を並べ替え"}
+          onClick={() => { setSelection([]); setIsOrdering(true); }}
+        >
+          <ArrowDownUp size={16} />
+          並べ替え
+        </Button>
         <IconButton
           title="一覧を更新"
-          disabled={isLoading}
+          disabled={isLoading || isOrdering}
           onClick={() => {
             void folders.refresh();
           }}
@@ -140,7 +164,7 @@ export function LibraryPanel({
             className={isLoading ? "animate-spin" : undefined}
           />
         </IconButton>
-        {folder && (
+        {folder && !isOrdering && (
           <div className="w-full">
             <FolderActions
               key={folder.id}
@@ -163,13 +187,16 @@ export function LibraryPanel({
           placeholder="曲名で検索"
           className="w-full rounded-lg pl-10 placeholder:text-muted"
           value={search}
-          disabled={Boolean(movingIds) || folders.moveMutation.isPending}
+          disabled={isOrdering || Boolean(movingIds) || folders.moveMutation.isPending}
           onChange={(event) => {
             setSearch(event.target.value);
             setSelection([]);
           }}
         />
       </div>
+      {search.trim() && scopedTracks.length > 1 && (
+        <p className="px-5 pb-4 text-sm text-muted sm:px-7">並べ替えるには検索を解除してください。</p>
+      )}
       {library.loadState !== "idle" && (
         <p
           className={`px-5 pb-4 text-sm sm:px-7 ${library.loadState === "error" ? "text-danger" : "text-muted"}`}
@@ -212,7 +239,9 @@ export function LibraryPanel({
           </Button>
         </div>
       )}
-      {missingFolder ? (
+      {isOrdering ? (
+        <TrackOrderEditor tracks={scopedTracks} scope={scope} onDone={() => setIsOrdering(false)} />
+      ) : missingFolder ? (
         <div className="px-7 py-16 text-center">
           <h3 className="font-medium">このフォルダは見つかりません</h3>
           <p className="mt-2 text-sm text-muted">
