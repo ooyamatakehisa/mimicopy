@@ -1,10 +1,17 @@
 import { act, renderHook } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
+import { defaultWaveformZoom } from "../../lib/waveform";
 import { useWaveformViewport } from "./useWaveformViewport";
+
+function useTestViewport(props: { currentTime: number; duration: number }) {
+  const [waveformZoom, setWaveformZoom] = useState<number>(defaultWaveformZoom);
+  return useWaveformViewport({ ...props, waveformZoom, setWaveformZoom });
+}
 
 describe("waveform viewport navigation", () => {
   it("keeps a manually inspected range while playback advances, then resumes following", () => {
-    const { result, rerender } = renderHook(useWaveformViewport, { initialProps: { currentTime: 0, duration: 120 } });
+    const { result, rerender } = renderHook(useTestViewport, { initialProps: { currentTime: 0, duration: 120 } });
     act(() => result.current.scaleWaveformZoomContinuously(4));
     act(() => result.current.panWaveform(2));
     expect(result.current.waveformRange).toEqual({ start: 60, end: 90 });
@@ -20,7 +27,7 @@ describe("waveform viewport navigation", () => {
   });
 
   it("zooms around the inspected region and clamps it when duration changes", () => {
-    const { result, rerender } = renderHook(useWaveformViewport, { initialProps: { currentTime: 0, duration: 120 } });
+    const { result, rerender } = renderHook(useTestViewport, { initialProps: { currentTime: 0, duration: 120 } });
     act(() => result.current.scaleWaveformZoomContinuously(4));
     act(() => result.current.panWaveform(2));
     act(() => result.current.changeWaveformZoom("in"));

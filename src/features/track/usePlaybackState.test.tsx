@@ -1,8 +1,9 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePlaybackState } from "./usePlaybackState";
+import { defaultPlaybackRate, type PlaybackRate } from "../../lib/playback";
 
 function deferred() {
   let resolve!: () => void;
@@ -64,7 +65,13 @@ const disposeBindings: (() => void)[] = [];
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onPlaybackEnded = vi.fn();
-  const hook = renderHook(() => usePlaybackState({ initialDuration: 30, trackDuration: 30, trackId: "test", onPlaybackEnded }), {
+  const hook = renderHook(() => {
+    const [playbackRate, setPlaybackRate] = useState<PlaybackRate>(defaultPlaybackRate);
+    return usePlaybackState({
+      initialDuration: 30, playbackRate, setPlaybackRate,
+      trackDuration: 30, trackId: "test", onPlaybackEnded
+    });
+  }, {
     wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
   });
   const original = media();
