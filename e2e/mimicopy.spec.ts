@@ -633,6 +633,59 @@ test("converts a YouTube URL through the UI", async ({ page }) => {
   await expect(library.getByText("最初の1曲を読み込もう")).toBeVisible();
 });
 
+test("shares track settings through the detail URL", async ({ page }) => {
+  await mockYoutubeConversion(page);
+  await page.goto("/tracks/e2e-youtube-track?source=library#practice");
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  const initialHistoryLength = await page.evaluate(() => history.length);
+  const mixer = page.getByLabel("Audio mixer");
+  await mixer.getByLabel("原音の音量").fill("40");
+  await mixer.getByLabel("ギターの音量").fill("0");
+  await mixer.getByLabel("ギター以外の音量").fill("65");
+
+  // Deliver a burst of updates before React has rendered between them.
+  await page.evaluate(() => {
+    for (const title of ["半音下げる", "速度を下げる", "速度を下げる", "原音をミュート", "ギターをソロ", "ギター以外をミュート", "ギター以外をソロ"]) {
+      document.querySelector<HTMLButtonElement>(`button[title="${title}"]`)?.click();
+    }
+    for (let step = 0; step < 2; step++) {
+      document.querySelector(".waveformSurface")?.dispatchEvent(new WheelEvent("wheel", {
+        ctrlKey: true, deltaY: -10, cancelable: true
+      }));
+    }
+  });
+
+  async function expectSharedSettings() {
+    await expect(page.getByTitle("転調を0に戻す")).toHaveText("-1");
+    await expect(page.getByLabel("Playback speed").locator("strong")).toHaveText("0.5x");
+    await expect(page.getByLabel("Waveform zoom")).toContainText("1.22x");
+    await expect(mixer.getByLabel("原音の音量")).toHaveValue("40");
+    await expect(mixer.getByLabel("ギターの音量")).toHaveValue("0");
+    await expect(mixer.getByLabel("ギター以外の音量")).toHaveValue("65");
+    for (const title of ["原音をミュート", "ギターをソロ", "ギター以外をミュート", "ギター以外をソロ"]) {
+      await expect(mixer.getByTitle(title)).toHaveAttribute("aria-pressed", "true");
+    }
+    await expect.poll(() => page.locator("audio").evaluate((audio) =>
+      (audio as HTMLAudioElement).playbackRate
+    )).toBe(0.5);
+  }
+
+  await expectSharedSettings();
+  await expect.poll(() => Object.fromEntries(new URL(page.url()).searchParams)).toEqual({
+    source: "library", transpose: "-1", speed: "0.5", zoom: expect.any(String),
+    originalGain: "0.4", originalMute: "1", stemGain: "0", stemSolo: "1",
+    remainderGain: "0.65", remainderMute: "1", remainderSolo: "1"
+  });
+  expect(new URL(page.url()).hash).toBe("#practice");
+  expect(await page.evaluate(() => history.length)).toBe(initialHistoryLength);
+  await page.reload();
+  await expectSharedSettings();
+  await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
+  await page.getByTitle("転調を0に戻す").click();
+  await expect.poll(() => new URL(page.url()).searchParams.has("transpose")).toBe(false);
+  expect(new URL(page.url()).searchParams.get("speed")).toBe("0.5");
+});
+
 test("shows stem separation progress and remaining time", async ({ page }) => {
   const now = new Date().toISOString();
   const track = {

@@ -1,15 +1,16 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, type Dispatch, type SetStateAction } from "react";
 import {
   clampMixerVolume,
-  defaultMixerState,
   getEffectiveMixerVolume,
   type MixerChannelId,
   type MixerState
 } from "../../lib/mixer";
 
-export function useStemMixer() {
-  const [channels, setChannels] = useState<MixerState>(defaultMixerState);
-
+export function useStemMixer(
+  channels: MixerState,
+  setChannels: Dispatch<SetStateAction<MixerState>>,
+  mixerReady: boolean
+) {
   const updateChannel = useCallback(
     (
       channelId: MixerChannelId,
@@ -20,7 +21,7 @@ export function useStemMixer() {
         [channelId]: update(currentChannels[channelId])
       }));
     },
-    []
+    [setChannels]
   );
 
   const setVolume = useCallback(
@@ -56,14 +57,16 @@ export function useStemMixer() {
   return useMemo(
     () => ({
       channels,
-      originalVolume: getEffectiveMixerVolume(channels, "original"),
+      originalVolume: mixerReady
+        ? getEffectiveMixerVolume(channels, "original")
+        : channels.original.muted ? 0 : channels.original.volume,
       remainderVolume: getEffectiveMixerVolume(channels, "remainder"),
       setVolume,
       stemVolume: getEffectiveMixerVolume(channels, "stem"),
       toggleMute,
       toggleSolo
     }),
-    [channels, setVolume, toggleMute, toggleSolo]
+    [channels, mixerReady, setVolume, toggleMute, toggleSolo]
   );
 }
 

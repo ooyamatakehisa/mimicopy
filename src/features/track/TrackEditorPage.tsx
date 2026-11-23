@@ -31,6 +31,7 @@ import { useClickTrack } from "./useClickTrack";
 import { useMarkersState } from "./useMarkersState";
 import { usePlaybackState } from "./usePlaybackState";
 import { useStemMixer } from "./useStemMixer";
+import { useTrackSettings } from "./useTrackSettings";
 import { useTranspose } from "./useTranspose";
 import { useWaveformViewport } from "./useWaveformViewport";
 import { WaveformPanel } from "./WaveformPanel";
@@ -214,14 +215,17 @@ function TrackEditor({
   const beatAnalysis = beatGridQuery.data ?? null;
   const beatGrid = beatGridQuery.data?.beatGrid ?? null;
   const autoNext = useAutoNextTrack(sequence);
+  const settings = useTrackSettings();
   const playback = usePlaybackState({
     initialDuration: decoded.duration || track.duration,
+    playbackRate: settings.playbackRate,
+    setPlaybackRate: settings.setPlaybackRate,
     trackDuration: track.duration,
     trackId: track.id,
     onPlaybackEnded: autoNext.onPlaybackEnded
   });
-  const mixer = useStemMixer();
-  const transpose = useTranspose();
+  const mixer = useStemMixer(settings.channels, settings.setChannels, Boolean(mixerMediaUrl));
+  const transpose = useTranspose(settings.semitones, settings.setSemitones);
   const playbackMediaUrl = mixerMediaUrl ?? track.mediaUrl;
   const pitchShift = useAudioPitchShift({
     playback,
@@ -238,7 +242,9 @@ function TrackEditor({
   });
   const waveform = useWaveformViewport({
     currentTime: playback.currentTime,
-    duration: playback.duration
+    duration: playback.duration,
+    waveformZoom: settings.waveformZoom,
+    setWaveformZoom: settings.setWaveformZoom
   });
   const clickTrack = useClickTrack({
     audioContext: pitchShift.audioContext,

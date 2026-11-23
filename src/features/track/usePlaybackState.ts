@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { updateTrackDuration } from "../../lib/api";
 import type { AudioProcessingControl } from "../../lib/audioProcessing";
 import {
   clampTime,
-  defaultPlaybackRate,
   nextPlaybackRate,
   seekBy,
   type PlaybackRate
@@ -44,11 +43,15 @@ function applyNativePlaybackRate(audio: HTMLMediaElement, rate: PlaybackRate) {
 
 export function usePlaybackState({
   initialDuration,
+  playbackRate,
+  setPlaybackRate,
   trackDuration,
   trackId,
   onPlaybackEnded
 }: {
   initialDuration: number;
+  playbackRate: PlaybackRate;
+  setPlaybackRate: Dispatch<SetStateAction<PlaybackRate>>;
   trackDuration: number;
   trackId: string;
   onPlaybackEnded?: () => void;
@@ -78,8 +81,6 @@ export function usePlaybackState({
   const [duration, setDuration] = useState(initialDuration);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackRate, setPlaybackRate] =
-    useState<PlaybackRate>(defaultPlaybackRate);
   const { error: durationError, mutate: saveDuration } = useMutation({
     mutationFn: updateTrackDuration,
     onSuccess: (updatedTrack) => {
@@ -373,15 +374,13 @@ export function usePlaybackState({
     }
   }, [audiblePosition, beginRestore]);
 
-  const selectPlaybackRate = useCallback((rate: PlaybackRate) => {
-    setPlaybackRate(rate);
-  }, []);
+  const selectPlaybackRate = setPlaybackRate;
 
   const changePlaybackRate = useCallback(
     (direction: "faster" | "slower") => {
       setPlaybackRate((currentRate) => nextPlaybackRate(currentRate, direction));
     },
-    []
+    [setPlaybackRate]
   );
 
   const syncMediaDuration = useCallback(

@@ -1,36 +1,39 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
-  centerWaveformRange, defaultWaveformZoom, getWaveformRange,
+  centerWaveformRange, getWaveformRange,
   keepTimeInWaveformRange, nextWaveformZoom, panWaveformRange,
   scaleWaveformZoom, type WaveformZoomDirection
 } from "../../lib/waveform";
 
-export function useWaveformViewport({ currentTime, duration }: {
+export function useWaveformViewport({ currentTime, duration, waveformZoom, setWaveformZoom }: {
   currentTime: number;
   duration: number;
+  waveformZoom: number;
+  setWaveformZoom: Dispatch<SetStateAction<number>>;
 }) {
   const [viewport, setViewport] = useState({
-    zoom: Number(defaultWaveformZoom), start: 0, following: true
+    zoom: waveformZoom, start: 0, following: true
   });
+  if (viewport.zoom !== waveformZoom) {
+    // Recenter using the previous visible range when the zoom changes.
+    const range = getWaveformRange(duration, viewport.zoom, viewport.start);
+    const anchor = viewport.following ? currentTime : (range.start + range.end) / 2;
+    setViewport({
+      zoom: waveformZoom,
+      start: centerWaveformRange(anchor, duration, waveformZoom),
+      following: waveformZoom === 1 || viewport.following
+    });
+  }
   const waveformRange = useMemo(
     () => getWaveformRange(duration, viewport.zoom, viewport.start),
     [duration, viewport.start, viewport.zoom]
   );
-  const zoomTo = useCallback((getZoom: (zoom: number) => number) => {
-    setViewport((current) => {
-      const zoom = getZoom(current.zoom);
-      const range = getWaveformRange(duration, current.zoom, current.start);
-      const anchor = current.following ? currentTime : (range.start + range.end) / 2;
-      return { zoom, start: centerWaveformRange(anchor, duration, zoom),
-        following: zoom === 1 || current.following };
-    });
-  }, [currentTime, duration]);
   const changeWaveformZoom = useCallback((direction: WaveformZoomDirection) => {
-    zoomTo((zoom) => nextWaveformZoom(zoom, direction));
-  }, [zoomTo]);
+    setWaveformZoom((zoom) => nextWaveformZoom(zoom, direction));
+  }, [setWaveformZoom]);
   const scaleWaveformZoomContinuously = useCallback((scale: number) => {
-    zoomTo((zoom) => scaleWaveformZoom(zoom, scale));
-  }, [zoomTo]);
+    setWaveformZoom((zoom) => scaleWaveformZoom(zoom, scale));
+  }, [setWaveformZoom]);
   const panWaveform = useCallback((fraction: number) => {
     setViewport((current) => current.zoom <= 1 || !Number.isFinite(fraction) || fraction === 0
       ? current

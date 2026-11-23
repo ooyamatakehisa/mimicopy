@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import { App } from "./App";
 import { TrackEditorPage } from "./features/track/TrackEditorPage";
 import { decodedTrackQueryKey, trackQueryKey } from "./lib/api";
@@ -592,7 +593,9 @@ describe("App", () => {
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     const { container, unmount } = render(
       <QueryClientProvider client={client}>
-        <TrackEditorPage trackId={running.id} navigateToLibrary={() => {}} />
+        <MemoryRouter>
+          <TrackEditorPage trackId={running.id} navigateToLibrary={() => {}} />
+        </MemoryRouter>
       </QueryClientProvider>
     );
     try {
