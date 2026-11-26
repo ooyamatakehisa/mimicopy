@@ -79,6 +79,7 @@ export function parseTimeInput(value: string, duration: number) {
 
 export type ShortcutCommand =
   | { type: "togglePlayback" }
+  | { type: "seekToStart" }
   | { type: "seek"; deltaSeconds: number }
   | { type: "speed"; direction: "faster" | "slower" }
   | { type: "addMarker" }
@@ -116,6 +117,10 @@ export function getShortcutCommand(event: ShortcutEvent): ShortcutCommand | null
 
   if (event.key === " " || event.key === "Enter" || key === "k") {
     return { type: "togglePlayback" };
+  }
+
+  if (key === "0") {
+    return { type: "seekToStart" };
   }
 
   if (event.key === "ArrowLeft") {

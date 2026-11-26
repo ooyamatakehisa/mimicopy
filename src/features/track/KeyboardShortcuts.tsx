@@ -91,6 +91,11 @@ export function KeyboardShortcuts({
         return;
       }
 
+      if (command.type === "seekToStart") {
+        if (!event.repeat) playback.seekTo(0);
+        return;
+      }
+
       if (command.type === "speed") {
         playback.changePlaybackRate(command.direction);
         return;
