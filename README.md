@@ -238,6 +238,7 @@ initialization/command waits and a visible error on failure.
 
 Space, Enter and `K` toggle playback even when a mixer, speed button or link
 has focus. Seek, rate and marker shortcuts also take priority over buttons.
+Press `0` to return to the start of the current track while playing or paused.
 Text fields retain normal typing; Shift+arrow waveform panning is unchanged.
 Use Alt+Enter to activate a focused button directly (for example, delete a marker).
 

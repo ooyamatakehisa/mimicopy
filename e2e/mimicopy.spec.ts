@@ -410,19 +410,20 @@ test("loads audio and supports the main playback and marker workflow", async ({
   await page.getByTitle("半音上げる").click();
   await expect(page.getByLabel("Transpose")).toContainText("+1");
   await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
-  await page
-    .locator('audio[aria-label="Original audio"]')
-    .evaluate((audio) => {
-      (audio as HTMLAudioElement).currentTime = 0;
-    });
+  await page.keyboard.press("Digit0");
+  await expect(page.getByLabel("Playback preparation")).toHaveCount(0);
+  await expectInitialPlaybackPosition(page);
   await page.getByTitle("再生").click();
-  await expect
-    .poll(() =>
-      page
-        .locator('audio[aria-label="Original audio"]')
-        .evaluate((audio) => (audio as HTMLAudioElement).currentTime)
-    )
-    .toBeGreaterThan(0.1);
+  const audio = page.locator('audio[aria-label="Original audio"]');
+  const currentTime = () => audio.evaluate((element) => (element as HTMLAudioElement).currentTime);
+  await expect.poll(currentTime).toBeGreaterThan(0.1);
+  await page.keyboard.press("KeyL");
+  await expect.poll(currentTime).toBeGreaterThan(9);
+  await page.keyboard.press("Digit0");
+  await expect.poll(() => audio.evaluate((element) => {
+    const media = element as HTMLAudioElement;
+    return !media.paused && media.currentTime > 0 && media.currentTime < 2;
+  })).toBe(true);
   await page.getByTitle("停止").click();
   await expect(page.getByTitle("再生", { exact: true })).toBeEnabled();
   await page.getByTitle("半音下げる").click();
